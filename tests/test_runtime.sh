@@ -21,6 +21,8 @@ mkdir -p "$RV_TMP"
 . "$RV_APP_ROOT/lib/touch.sh"
 . "$RV_APP_ROOT/lib/ui.sh"
 
+rv_reset_session
+
 failures=0
 assert_eq() {
     if [[ "$1" != "$2" ]]; then
@@ -106,11 +108,69 @@ rv_handle_cook_gesture
 assert_eq "$RV_INGREDIENT_CURSOR" 2 "ingredient row hit"
 assert_eq "$RV_REDRAW,$RV_REDRAW_WAVEFORM" "ingredients,DU" "ingredient tap refresh intent"
 
+# A linked ingredient (fixture 0002.recipe record 5, "1/2 tsp salt" pinned to
+# fixture-a i.e. Apple Pie) has no competing tap action, so unlike an
+# instruction link the whole row counts, even a tap past the visible text.
+RV_ROW5_Y=$((RV_CONTENT_TOP + 4 * RV_INGREDIENT_LINE_H + RV_INGREDIENT_ITEM_GAP))
+rv_layout_hit "$RV_TMP/ingredients.layout" 250 "$RV_ROW5_Y" 0 "$RV_INGREDIENT_LINE_H" ingredients 10 "$RV_INGREDIENT_ITEM_GAP"
+assert_eq "$RV_HIT_RECORD,$RV_HIT_KIND,$RV_HIT_LINK" "5,item,fixture-a" "ingredient link hit is not x-gated"
+RV_REDRAW=none; RV_GESTURE=tap; RV_X1=250; RV_X2=250; RV_Y2=$RV_ROW5_Y
+rv_handle_cook_gesture
+assert_eq "$RV_SELECTED_ORDINAL" 1 "tapping a linked ingredient navigates to its target recipe"
+assert_eq "$RV_RECORD_TITLE" "Apple Pie" "navigated recipe is loaded"
+assert_eq "$RV_NAV_STACK" 2 "navigating via an ingredient link remembers the originating ordinal"
+RV_NAV_STACK=
+rv_load_recipe 2
+rv_checked_has 5 && { echo "FAIL: linked ingredient should never gain a check" >&2; failures=$((failures + 1)); }
+
 # Instruction hit testing accounts for the small gap between steps.
-rv_layout_hit "$RV_TMP/instructions.layout" 230 0 "$RV_INSTRUCTION_LINE_H" instructions
+RV_LINK_TEXT_X=$((RV_INSTRUCTION_X + 16))
+rv_layout_hit "$RV_TMP/instructions.layout" 400 230 0 "$RV_INSTRUCTION_LINE_H" instructions "$RV_LINK_TEXT_X" "$RV_INSTRUCTION_STEP_GAP"
 assert_eq "$RV_HIT_KIND" "" "instruction gap ignores tap"
-rv_layout_hit "$RV_TMP/instructions.layout" 240 0 "$RV_INSTRUCTION_LINE_H" instructions
+rv_layout_hit "$RV_TMP/instructions.layout" 400 240 0 "$RV_INSTRUCTION_LINE_H" instructions "$RV_LINK_TEXT_X" "$RV_INSTRUCTION_STEP_GAP"
 assert_eq "$RV_HIT_RECORD,$RV_HIT_KIND" "3,item" "instruction after-gap hit"
+assert_eq "$RV_HIT_LINK" "" "non-linked instruction has no link target"
+
+# Only the resolved phrase within a linked step is tappable (fixture
+# 0002.recipe record 2 links the phrase "Ragu Base" to fixture-a, i.e. Apple
+# Pie); tapping the same step elsewhere behaves like a plain instruction tap.
+RV_LINK_Y=$((RV_CONTENT_TOP + RV_INSTRUCTION_LINE_H))
+rv_layout_hit "$RV_TMP/instructions.layout" 340 "$RV_LINK_Y" 0 "$RV_INSTRUCTION_LINE_H" instructions "$RV_LINK_TEXT_X" "$RV_INSTRUCTION_STEP_GAP"
+assert_eq "$RV_HIT_RECORD,$RV_HIT_KIND,$RV_HIT_LINK" "2,item," "tap on the step but off the phrase has no link"
+rv_layout_hit "$RV_TMP/instructions.layout" 500 "$RV_LINK_Y" 0 "$RV_INSTRUCTION_LINE_H" instructions "$RV_LINK_TEXT_X" "$RV_INSTRUCTION_STEP_GAP"
+assert_eq "$RV_HIT_RECORD,$RV_HIT_KIND,$RV_HIT_LINK" "2,item,fixture-a" "tap on the phrase exposes the target uid"
+rv_uid_ordinal fixture-a
+assert_eq "$RV_UID_ORDINAL" 1 "link uid resolves to its manifest ordinal"
+
+# Tapping the same step off the phrase still just highlights it as usual.
+RV_REDRAW=none; RV_GESTURE=tap; RV_X1=500; RV_X2=340; RV_Y2=$RV_LINK_Y
+rv_handle_cook_gesture
+assert_eq "$RV_INSTRUCTION_CURSOR" 2 "off-phrase tap on a linked step sets cursor instead of navigating"
+assert_eq "$RV_SCREEN" cook "off-phrase tap stays on the same recipe"
+
+# Tapping the phrase itself navigates and remembers where we came from.
+RV_REDRAW=none; RV_INSTRUCTION_CURSOR=-1; RV_X1=500; RV_X2=500; RV_Y2=$RV_LINK_Y
+rv_handle_cook_gesture
+assert_eq "$RV_SELECTED_ORDINAL" 1 "tapping the linked phrase navigates to its target recipe"
+assert_eq "$RV_RECORD_TITLE" "Apple Pie" "navigated recipe is loaded"
+assert_eq "$RV_REDRAW" full "linked navigation requests a full redraw"
+assert_eq "$RV_NAV_STACK" 2 "navigating via a link remembers the originating ordinal"
+
+# The back button (top-left title bar) returns to the recipe the link came from.
+RV_REDRAW=none; RV_GESTURE=tap; RV_X1=10; RV_Y2=20
+rv_handle_cook_gesture
+assert_eq "$RV_SELECTED_ORDINAL" 2 "back button returns to the originating recipe"
+assert_eq "$RV_RECORD_TITLE" "Zesty Soup" "back navigation reloads the originating recipe"
+assert_eq "$RV_REDRAW" full "back navigation requests a full redraw"
+assert_eq "$RV_NAV_STACK" "" "back navigation empties the stack once exhausted"
+
+# Opening a recipe fresh from the list clears any stale back-navigation stack.
+RV_NAV_STACK=99
+RV_GESTURE=tap; RV_Y2=$((RV_LIST_TOP + RV_LIST_ROW_H + 10))
+rv_handle_list_gesture
+assert_eq "$RV_NAV_STACK" "" "opening a recipe from the list clears the back stack"
+
+rv_load_recipe 2
 
 # Pane scrolling remains independent and clamps.
 RV_INGREDIENT_MAX_SCROLL=20; RV_INSTRUCTION_MAX_SCROLL=30
@@ -125,16 +185,19 @@ rv_handle_cook_gesture
 assert_eq "$RV_INSTRUCTION_SCROLL" 5 "instruction scroll"
 assert_eq "$RV_REDRAW,$RV_REDRAW_WAVEFORM" "instructions,GC16" "instruction scroll refresh intent"
 
-# Tapping END asks first; Cancel preserves progress and confirmation clears it.
-RV_GESTURE=tap; RV_Y2=$RV_END_Y; RV_INGREDIENT_CHECKS=',2,'
+# The back button is always present; at the root of the nav stack (no link
+# history) it takes over END RECIPE's old job and still asks first. Cancel
+# preserves progress and confirmation clears it.
+assert_eq "$RV_NAV_STACK" "" "root recipe has no back-nav history"
+RV_GESTURE=tap; RV_X1=10; RV_Y2=20; RV_INGREDIENT_CHECKS=',2,'
 rv_handle_cook_gesture
-assert_eq "$RV_SCREEN" confirm "end opens confirmation"
+assert_eq "$RV_SCREEN" confirm "back button at the root opens end confirmation"
 assert_eq "$RV_INGREDIENT_CHECKS" ',2,' "confirmation preserves checks"
 RV_X2=$RV_CONFIRM_CANCEL_X; RV_Y2=$((RV_CONFIRM_BUTTON_Y + 20))
 rv_handle_confirm_gesture
 assert_eq "$RV_SCREEN" cook "cancel returns to recipe"
 assert_eq "$RV_INGREDIENT_CHECKS" ',2,' "cancel preserves checks"
-RV_Y2=$RV_END_Y
+RV_GESTURE=tap; RV_X1=10; RV_Y2=20
 rv_handle_cook_gesture
 RV_X2=$RV_CONFIRM_END_X; RV_Y2=$((RV_CONFIRM_BUTTON_Y + 20))
 rv_handle_confirm_gesture
@@ -147,15 +210,20 @@ rv_toggle_check 2
 RV_INGREDIENT_CURSOR=2
 : > "$RV_DISPLAY_LOG"
 rv_draw_cook
-assert_contains "$RV_DISPLAY_LOG" $'rect\t300\t66\t2\t900' "pane geometry"
-assert_contains "$RV_DISPLAY_LOG" $'rect\t0\t966\t758\t2' "end rule geometry"
-assert_contains "$RV_DISPLAY_LOG" $'text\t310\t972\t13\tbold\tEND RECIPE' "tap end label"
-assert_eq "$(rv_pxh "$RV_INGREDIENT_PT" "$RV_INGREDIENT_LEADING")" 39 "ingredient line height"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t300\t66\t2\t892' "pane geometry"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t0\t958\t758\t2' "content-bottom rule geometry"
+assert_not_contains "$RV_DISPLAY_LOG" $'END RECIPE' "END RECIPE bar is gone; the back button replaced it"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t6\t4\t56\t2' "back button box is always drawn"
+assert_contains "$RV_DISPLAY_LOG" $'text\t24\t5\t19\tbold\t<' "back button arrow is vertically centered"
+assert_eq "$(rv_pxh "$RV_INGREDIENT_PT" "$RV_INGREDIENT_LEADING")" 34 "ingredient line height"
 assert_eq "$(rv_pxh "$RV_INSTRUCTION_PT" "$RV_INSTRUCTION_LEADING")" 39 "instruction line height"
 rv_truncate "1234567890" 8; assert_eq "$RV_TRUNCATED" "12345..." "title truncation"
-assert_not_contains "$RV_DISPLAY_LOG" $'text\t10\t149\t13\tbold\tX' "checked ingredient no longer uses margin X"
-assert_contains "$RV_DISPLAY_LOG" $'text\t10\t149\t13\tregular\t1 cup water' "ingredient flush-left placement"
-assert_contains "$RV_DISPLAY_LOG" $'rect\t10\t169\t140\t2' "ingredient strikethrough placement"
+assert_not_contains "$RV_DISPLAY_LOG" $'text\t10\t144\t13\tbold\tX' "checked ingredient no longer uses margin X"
+assert_contains "$RV_DISPLAY_LOG" $'text\t10\t144\t13\tregular\t1 cup water' "ingredient flush-left placement"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t10\t164\t140\t2' "ingredient strikethrough placement"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t10\t298\t136\t2' "linked ingredient underlines the whole row"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t417\t185\t131\t2' "linked instruction underline covers only the phrase"
+assert_not_contains "$RV_DISPLAY_LOG" $'rect\t318\t185\t412\t2' "underline no longer spans the whole step"
 assert_not_contains "$RV_DISPLAY_LOG" $'rect\t3\t149\t3\t37' "ingredient cursor gutter removed"
 assert_contains "$RV_DISPLAY_LOG" $'text\t318\t237\t13\tregular\tSimmer for 10 minutes.' "instruction step gap"
 if awk -F '\t' '$1 == "text" && ($2 == 10 || $2 == 318) && $3 >= 958 { found=1 } END { exit !found }' "$RV_DISPLAY_LOG"; then
@@ -169,9 +237,16 @@ RV_LIST_SCROLL=0
 rv_draw_list
 assert_contains "$RV_DISPLAY_LOG" $'text\t15\t136\t17\tregular\tApple Pie' "large recipe list type"
 assert_contains "$RV_DISPLAY_LOG" $'text\t25\t78\t15\tregular\tSearch recipes...' "search bar placeholder"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t6\t4\t56\t2' "list back button box is drawn"
+assert_contains "$RV_DISPLAY_LOG" $'text\t24\t5\t19\tbold\t<' "list back button arrow is vertically centered"
 RV_GESTURE=tap; RV_Y2=$((RV_LIST_TOP + RV_LIST_ROW_H + 10))
 rv_handle_list_gesture
 assert_eq "$RV_SELECTED_ORDINAL" 2 "large list row hit"
+
+# The list's back button has no recipe to unwind to, so it exits the app.
+RV_SCREEN=list; RV_GESTURE=tap; RV_X1=10; RV_Y2=20
+rv_handle_list_gesture
+assert_eq "$RV_SCREEN" exit "list back button requests app exit"
 
 # The search bar opens a touch keyboard, filters immediately, and maps results
 # back to their original manifest ordinal.
@@ -210,14 +285,14 @@ assert_contains "$RV_DISPLAY_LOG" $'rect\t398\t650\t300\t3' "end button"
 : > "$RV_DISPLAY_LOG"
 RV_PARTIAL_COUNT=0
 rv_draw_cook_pane_partial ingredients DU
-assert_contains "$RV_DISPLAY_LOG" $'clear-region\t0\t110\t300\t856' "ingredient partial clear"
-assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t0\t110\t300\t856\tDU' "ingredient partial refresh"
+assert_contains "$RV_DISPLAY_LOG" $'clear-region\t0\t110\t300\t848' "ingredient partial clear"
+assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t0\t110\t300\t848\tDU' "ingredient partial refresh"
 assert_not_contains "$RV_DISPLAY_LOG" $'refresh\t0\t0\t758\t1024' "ingredient partial avoids full refresh"
 
 : > "$RV_DISPLAY_LOG"
 rv_draw_cook_pane_partial instructions GC16
-assert_contains "$RV_DISPLAY_LOG" $'clear-region\t302\t110\t456\t856' "instruction partial clear"
-assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t302\t110\t456\t856\tGC16' "instruction partial refresh"
+assert_contains "$RV_DISPLAY_LOG" $'clear-region\t302\t110\t456\t848' "instruction partial clear"
+assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t302\t110\t456\t848\tGC16' "instruction partial refresh"
 
 # Periodic cleanup falls back to a full flashing refresh.
 : > "$RV_DISPLAY_LOG"
@@ -259,14 +334,23 @@ if rv_manifest_load; then
 fi
 RV_LIBRARY_ROOT=$saved_library
 
-# End-to-end host launch consumes an overridden touch capture and exits on idle.
+# End-to-end host launch consumes an overridden touch capture. There is no
+# idle timeout, so the fixture taps the list screen's back button (top-left,
+# X<64, Y<RV_TITLE_H) to make the app exit on its own.
+exit_touch_fixture="$TMP_ROOT/touch-exit.bin"
+printf '%b' \
+    '\x0a\x00\x00\x00\x00\x00\x00\x00\x03\x00\x35\x00\x14\x00\x00\x00' \
+    '\x0a\x00\x00\x00\x00\x00\x00\x00\x03\x00\x36\x00\x14\x00\x00\x00' \
+    '\x0a\x00\x00\x00\xa0\x86\x01\x00\x03\x00\x39\x00\xff\xff\xff\xff' \
+    > "$exit_touch_fixture"
 integration_tmp="$TMP_ROOT/recipe-viewer.integration"
-RV_TOUCH_EVENT_FILE="$touch_fixture" RV_TOUCH_ROTATION=U RV_IDLE_TIMEOUT=1 RV_TMP="$integration_tmp" \
+RV_TOUCH_EVENT_FILE="$exit_touch_fixture" RV_TOUCH_ROTATION=U RV_TMP="$integration_tmp" \
     RV_DISPLAY_DIAGNOSTIC="mock display diagnostic" \
-    /usr/bin/sh "$RV_APP_ROOT/bin/recipe_viewer.sh"
+    timeout 10 /usr/bin/sh "$RV_APP_ROOT/bin/recipe_viewer.sh"
 assert_contains "$RV_LOG" "=== launch" "integration launch log"
-assert_contains "$RV_LOG" "gesture kind=swipe-up" "integration gesture log"
-assert_contains "$RV_LOG" "idle timeout seconds=1" "integration idle exit"
+assert_contains "$RV_LOG" "gesture kind=tap" "integration gesture log"
+assert_contains "$RV_LOG" "exit requested from recipe list" "integration back-button exit"
+assert_contains "$RV_LOG" "returning to the Kindle Home screen" "integration exit log"
 assert_contains "$RV_LOG" "mock display diagnostic" "display diagnostics redirected"
 
 if (( failures > 0 )); then

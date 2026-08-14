@@ -3,7 +3,6 @@
 RV_APP_ROOT=${RV_APP_ROOT:-/mnt/us/extensions/RecipeViewer}
 RV_LIBRARY_ROOT=${RV_LIBRARY_ROOT:-$RV_APP_ROOT/library}
 RV_LOG=${RV_LOG:-$RV_APP_ROOT/debug.log}
-RV_IDLE_TIMEOUT=${RV_IDLE_TIMEOUT:-40}
 RV_PARTIAL_REFRESH=${RV_PARTIAL_REFRESH:-1}
 RV_PARTIAL_FULL_EVERY=${RV_PARTIAL_FULL_EVERY:-12}
 RV_INSTRUCTION_STEP_GAP=${RV_INSTRUCTION_STEP_GAP:-10}
@@ -56,10 +55,10 @@ rv_filter_recipes
 RV_SCREEN=list
 rv_draw_list
 
-RV_IDLE=0
-while [ "$RV_IDLE" -lt "$RV_IDLE_TIMEOUT" ]; do
+# Runs until the back button on the recipe list requests an exit; there is
+# no idle timeout, so the app only closes when the reader asks it to.
+while :; do
     if rv_capture_gesture; then
-        RV_IDLE=0
         RV_SCREEN_BEFORE=$RV_SCREEN
         RV_REDRAW=none
         RV_REDRAW_WAVEFORM=DU
@@ -69,6 +68,9 @@ while [ "$RV_IDLE" -lt "$RV_IDLE_TIMEOUT" ]; do
             cook) rv_handle_cook_gesture ;;
             confirm) rv_handle_confirm_gesture ;;
         esac
+        if [ "$RV_SCREEN" = exit ]; then
+            break
+        fi
         if [ "$RV_SCREEN" != "$RV_SCREEN_BEFORE" ] || [ "$RV_REDRAW" = full ]; then
             case "$RV_SCREEN" in
                 list) rv_draw_list ;;
@@ -83,9 +85,7 @@ while [ "$RV_IDLE" -lt "$RV_IDLE_TIMEOUT" ]; do
                 ingredients|instructions) rv_draw_cook_pane_partial "$RV_REDRAW" "$RV_REDRAW_WAVEFORM" ;;
             esac
         fi
-    else
-        RV_IDLE=$((RV_IDLE + 1))
     fi
 done
-rv_log "idle timeout seconds=$RV_IDLE_TIMEOUT; exiting with retained eink image"
+rv_log "exit requested from recipe list; returning to the Kindle Home screen"
 exit 0

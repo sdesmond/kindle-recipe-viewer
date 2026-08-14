@@ -1,12 +1,11 @@
 TITLE	Zesty Soup
-INGREDIENT	section-header	Soup:
-INGREDIENT	item	1 cup water
-INGREDIENT	item	1 cup water
-INGREDIENT	section-header	Seasoning
-INGREDIENT	item	1/2 tsp salt
-INSTRUCTION	section-header	Prepare:
-INSTRUCTION	item	Stir the Ragu Base into the water. This is a soft wrap.
-INSTRUCTION	item	Simmer for 10 minutes.
-INSTRUCTION	section-header	Notes:
-INSTRUCTION	item	Keeps for two days.
-
+INGREDIENT	section-header	Soup:	
+INGREDIENT	item	1 cup water	
+INGREDIENT	item	1 cup water	
+INGREDIENT	section-header	Seasoning	
+INGREDIENT	item	1/2 tsp salt	fixture-a
+INSTRUCTION	section-header	Prepare:		
+INSTRUCTION	item	Stir the Ragu Base into the water. This is a soft wrap.	fixture-a	Ragu Base
+INSTRUCTION	item	Simmer for 10 minutes.		
+INSTRUCTION	section-header	Notes:		
+INSTRUCTION	item	Keeps for two days.		

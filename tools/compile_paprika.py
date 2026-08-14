@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 4
 RECIPE_LINK = re.compile(r"\[recipe:([^\]\r\n]+)\]", re.IGNORECASE)
 STEP_NUMBER = re.compile(r"^\s*\d+\s*[.)]\s+")
 WHOLE_EMPHASIS = re.compile(r"^(\*\*|__|\*|_)(?P<body>\S(?:.*?\S)?)\1$")
@@ -54,6 +54,7 @@ class CompileError(ValueError):
 class Line:
     kind: str
     text: str
+    link_title: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,6 @@ def normalize_text(value: object, *, preserve_newlines: bool = True) -> str:
     if not isinstance(value, str):
         raise CompileError(f"expected text field, got {type(value).__name__}")
     text = value.replace("\r\n", "\n").replace("\r", "\n").replace("\u2028", "\n")
-    text = RECIPE_LINK.sub(lambda match: match.group(1), text)
     text = text.translate(CHARACTER_MAP)
     text = "".join(
         character
@@ -102,11 +102,24 @@ def strip_inline_markup(text: str) -> str:
 
 def classify_line(raw_line: str) -> Line:
     text = raw_line.strip()
+    # Paprika links are plain title references (no id); the target is resolved
+    # against the rest of the compiled library once every title is known. Only
+    # the first link in a line becomes navigable, matching real-world exports
+    # where at most one appears per instruction step.
+    link_title = ""
+    link_match = RECIPE_LINK.search(text)
+    if link_match:
+        # The device later locates this phrase inside the flattened line with
+        # a plain substring search, so the inserted text must be byte-identical
+        # to link_title, not the raw (unsqueezed) bracket contents.
+        link_title = normalize_text(link_match.group(1), preserve_newlines=False)
+        text = text[: link_match.start()] + link_title + text[link_match.end() :]
+        text = RECIPE_LINK.sub(lambda match: match.group(1), text)
     whole = WHOLE_EMPHASIS.fullmatch(text)
     if whole:
-        return Line("section-header", strip_inline_markup(whole.group("body")))
+        return Line("section-header", strip_inline_markup(whole.group("body")), link_title)
     kind = "section-header" if len(text) < 60 and text.endswith(":") else "item"
-    return Line(kind, strip_inline_markup(text))
+    return Line(kind, strip_inline_markup(text), link_title)
 
 
 def parse_ingredients(value: object) -> tuple[Line, ...]:
@@ -134,7 +147,7 @@ def parse_instructions(value: object) -> tuple[Line, ...]:
             # A header is only recognized independently at the start of a block.
             text = STEP_NUMBER.sub("", item.text)
             if text:
-                result.append(Line("item", text))
+                result.append(Line("item", text, item.link_title))
     return tuple(result)
 
 
@@ -210,6 +223,9 @@ def write_library(recipes: list[Recipe], output: Path) -> None:
     output_parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=f".{output.name}-", dir=output_parent))
     try:
+        # Paprika links reference a target by title text alone, so resolution
+        # can only happen once every recipe's title is known.
+        title_to_uid = {recipe.title.casefold(): recipe.uid for recipe in recipes}
         manifest_lines = [f"SCHEMA\t{SCHEMA_VERSION}", f"COUNT\t{len(recipes)}"]
         for ordinal, recipe in enumerate(recipes, 1):
             filename = f"{ordinal:04d}.recipe"
@@ -217,12 +233,30 @@ def write_library(recipes: list[Recipe], output: Path) -> None:
                 "\t".join(("RECIPE", filename, _record_field(recipe.uid), _record_field(recipe.title)))
             )
             record_lines = [f"TITLE\t{_record_field(recipe.title)}"]
-            record_lines.extend(
-                f"INGREDIENT\t{line.kind}\t{_record_field(line.text)}" for line in recipe.ingredients
-            )
-            record_lines.extend(
-                f"INSTRUCTION\t{line.kind}\t{_record_field(line.text)}" for line in recipe.instructions
-            )
+            for line in recipe.ingredients:
+                link_uid = title_to_uid.get(line.link_title.casefold(), "") if line.link_title else ""
+                # An ingredient link has no competing tap action (unlike an
+                # instruction step, which still needs to work for its other
+                # text), so the device treats the whole line as the target
+                # instead of locating a specific phrase within it.
+                record_lines.append(
+                    "\t".join(("INGREDIENT", line.kind, _record_field(line.text), _record_field(link_uid)))
+                )
+            for line in recipe.instructions:
+                link_uid = title_to_uid.get(line.link_title.casefold(), "") if line.link_title else ""
+                # Only a resolved link carries its phrase forward: the device
+                # locates this exact substring within the line to underline and
+                # hit-test just that phrase, not the whole instruction step.
+                link_phrase = line.link_title if link_uid else ""
+                record_lines.append(
+                    "\t".join((
+                        "INSTRUCTION",
+                        line.kind,
+                        _record_field(line.text),
+                        _record_field(link_uid),
+                        _record_field(link_phrase),
+                    ))
+                )
             (stage / filename).write_text("\n".join(record_lines) + "\n", encoding="utf-8", newline="\n")
         (stage / "manifest.tsv").write_text(
             "\n".join(manifest_lines) + "\n", encoding="utf-8", newline="\n"

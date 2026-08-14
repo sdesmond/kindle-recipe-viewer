@@ -114,14 +114,37 @@ rv_build_layout()
         for (i = 1; i <= length(text); i++) total += glyph(substr(text, i, 1))
         return total
     }
-    function emit(idx, kind, text,    rest, pos, last_space, line, first, i, used, c) {
+    function emit_row(idx, kind, rowtext, first, link, phrase,    p, row_link, row_prefix, row_phrase_w) {
+        # With a phrase given (instruction steps), only that located phrase
+        # becomes a tap/underline target, so the rest of the step still reads
+        # as plain text. With no phrase (ingredient links, which have no
+        # competing tap action to preserve), the whole wrapped row is the
+        # target on every row it spans.
+        row_link = ""
+        row_prefix = ""
+        row_phrase_w = ""
+        if (phrase != "") {
+            p = index(rowtext, phrase)
+            if (p > 0) {
+                row_link = link
+                row_prefix = measured(substr(rowtext, 1, p - 1))
+                row_phrase_w = measured(phrase)
+            }
+        } else if (link != "") {
+            row_link = link
+            row_prefix = 0
+            row_phrase_w = measured(rowtext)
+        }
+        print idx "\t" kind "\t" rowtext "\t" first "\t" measured(rowtext) "\t" row_link "\t" row_prefix "\t" row_phrase_w
+    }
+    function emit(idx, kind, text, link, phrase,    rest, pos, last_space, line, first, i, used, c) {
         rest = text
         line = ""
         first = 1
         while (length(rest) > 0) {
             sub(/^[ ]+/, "", rest)
             if (measured(rest) <= width) {
-                print idx "\t" kind "\t" rest "\t" first "\t" measured(rest)
+                emit_row(idx, kind, rest, first, link, phrase)
                 return
             }
             used = 0
@@ -138,12 +161,12 @@ rv_build_layout()
             if (pos < 1) pos = 1
             line = substr(rest, 1, pos)
             sub(/[ ]+$/, "", line)
-            print idx "\t" kind "\t" line "\t" first "\t" measured(line)
+            emit_row(idx, kind, line, first, link, phrase)
             first = 0
             rest = substr(rest, pos + 1)
         }
     }
-    $1 == wanted { record_index++; emit(record_index, $2, $3) }
+    $1 == wanted { record_index++; emit(record_index, $2, $3, $4, $5) }
     ' "$1" > "$4"
 }
 
@@ -165,12 +188,14 @@ rv_load_recipe()
     rv_build_layout "$RV_ACTIVE_RECIPE" INSTRUCTION "$RV_INSTRUCTION_WRAP" "$RV_TMP/instructions.layout"
     RV_INGREDIENT_ROWS=$(wc -l < "$RV_TMP/ingredients.layout" | tr -d ' ')
     RV_INSTRUCTION_ROWS=$(wc -l < "$RV_TMP/instructions.layout" | tr -d ' ')
+    RV_INGREDIENT_ITEMS=$(awk -F '\t' '$1 == "INGREDIENT" && $2 == "item" { count++ } END { print count + 0 }' "$RV_ACTIVE_RECIPE")
     RV_INSTRUCTION_ITEMS=$(awk -F '\t' '$1 == "INSTRUCTION" && $2 == "item" { count++ } END { print count + 0 }' "$RV_ACTIVE_RECIPE")
     RV_INGREDIENT_LINE_H=$(rv_pxh "$RV_INGREDIENT_PT" "$RV_INGREDIENT_LEADING")
     RV_INSTRUCTION_LINE_H=$(rv_pxh "$RV_INSTRUCTION_PT" "$RV_INSTRUCTION_LEADING")
     RV_INGREDIENT_VISIBLE=$(((RV_CONTENT_BOTTOM - RV_CONTENT_TOP) / RV_INGREDIENT_LINE_H))
     RV_INSTRUCTION_VISIBLE=$(((RV_CONTENT_BOTTOM - RV_CONTENT_TOP) / RV_INSTRUCTION_LINE_H))
-    RV_INGREDIENT_MAX_SCROLL=$((RV_INGREDIENT_ROWS - RV_INGREDIENT_VISIBLE)); [ "$RV_INGREDIENT_MAX_SCROLL" -lt 0 ] && RV_INGREDIENT_MAX_SCROLL=0
+    RV_INGREDIENT_GAP_ROWS=$(((RV_INGREDIENT_ITEMS * RV_INGREDIENT_ITEM_GAP + RV_INGREDIENT_LINE_H - 1) / RV_INGREDIENT_LINE_H))
+    RV_INGREDIENT_MAX_SCROLL=$((RV_INGREDIENT_ROWS + RV_INGREDIENT_GAP_ROWS - RV_INGREDIENT_VISIBLE)); [ "$RV_INGREDIENT_MAX_SCROLL" -lt 0 ] && RV_INGREDIENT_MAX_SCROLL=0
     RV_INSTRUCTION_GAP_ROWS=$(((RV_INSTRUCTION_ITEMS * RV_INSTRUCTION_STEP_GAP + RV_INSTRUCTION_LINE_H - 1) / RV_INSTRUCTION_LINE_H))
     RV_INSTRUCTION_MAX_SCROLL=$((RV_INSTRUCTION_ROWS + RV_INSTRUCTION_GAP_ROWS - RV_INSTRUCTION_VISIBLE)); [ "$RV_INSTRUCTION_MAX_SCROLL" -lt 0 ] && RV_INSTRUCTION_MAX_SCROLL=0
     RV_INGREDIENT_CHECKS=,
@@ -239,7 +264,15 @@ rv_render_list_body()
 rv_draw_list()
 {
     rv_clear
-    rv_text 14 6 "$RV_TITLE_PT" bold "Recipes"
+    # The same top-left back button as the cook screen, but here it exits the
+    # app back to the Kindle Home screen since there is no recipe to unwind.
+    RV_BACK_X=6; RV_BACK_Y=4; RV_BACK_W=56; RV_BACK_H=58
+    rv_draw_outline "$RV_BACK_X" "$RV_BACK_Y" "$RV_BACK_W" "$RV_BACK_H" 2
+    RV_BACK_CELL_H=$(rv_pxh "$RV_TITLE_PT" 0)
+    RV_BACK_TEXT_Y=$((RV_BACK_Y + (RV_BACK_H - RV_BACK_CELL_H) / 2))
+    rv_text "$((RV_BACK_X + 18))" "$RV_BACK_TEXT_Y" "$RV_TITLE_PT" bold "<"
+    RV_TITLE_X=$((RV_BACK_X + RV_BACK_W + 8))
+    rv_text "$RV_TITLE_X" 6 "$RV_TITLE_PT" bold "Recipes"
     rv_draw_search_bar
     rv_render_list_body
     rv_log "render screen=list query=$RV_SEARCH_QUERY scroll=$RV_LIST_SCROLL matches=$RV_FILTERED_COUNT rail_y=$RV_THUMB_Y rail_h=$RV_THUMB_H"
@@ -256,13 +289,14 @@ rv_draw_pane()
     RV_Y=$RV_CONTENT_TOP
     RV_RENDERED=0
     RV_PREVIOUS_KIND=
-    while IFS="$RV_TAB" read -r RV_RECORD_INDEX RV_KIND RV_LINE_TEXT RV_FIRST RV_LINE_UNITS; do
+    while IFS="$RV_TAB" read -r RV_RECORD_INDEX RV_KIND RV_LINE_TEXT RV_FIRST RV_LINE_UNITS RV_LINK_UID RV_LINK_PREFIX_UNITS RV_LINK_PHRASE_UNITS; do
         RV_VISUAL=$((RV_VISUAL + 1))
         [ "$RV_VISUAL" -gt "$RV_SCROLL" ] || continue
-        if [ "$RV_PANE" = instructions ] && [ "$RV_FIRST" = 1 ] && \
-            [ "$RV_KIND" = item ] && [ "$RV_PREVIOUS_KIND" = item ] && \
-            [ "$RV_RENDERED" -gt 0 ]; then
-            RV_Y=$((RV_Y + RV_INSTRUCTION_STEP_GAP))
+        if [ "$RV_FIRST" = 1 ] && [ "$RV_KIND" = item ] && \
+            [ "$RV_PREVIOUS_KIND" = item ] && [ "$RV_RENDERED" -gt 0 ]; then
+            RV_ITEM_GAP=$RV_INSTRUCTION_STEP_GAP
+            [ "$RV_PANE" = ingredients ] && RV_ITEM_GAP=$RV_INGREDIENT_ITEM_GAP
+            RV_Y=$((RV_Y + RV_ITEM_GAP))
         fi
         [ "$((RV_Y + RV_LINE_H))" -le "$RV_CONTENT_BOTTOM" ] || break
         RV_STYLE=regular
@@ -284,6 +318,27 @@ rv_draw_pane()
             RV_STRIKE_Y=$((RV_Y + RV_INGREDIENT_FONT_PX * 11 / 20))
             rv_rect "$RV_TEXT_X" "$RV_STRIKE_Y" "$RV_STRIKE_W" 2
         fi
+        if [ "$RV_KIND" = item ] && [ -n "$RV_LINK_UID" ]; then
+            # In instructions, only the resolved recipe-link phrase is
+            # tappable (see rv_layout_hit), so only that exact span is
+            # underlined and the rest of the step still reads as plain text.
+            # In ingredients, there's no competing tap action, so the whole
+            # row is the target and the whole row gets underlined.
+            RV_LINK_FONT_PX=$RV_INSTRUCTION_FONT_PX
+            RV_LINK_PANE_W=$RV_INSTRUCTION_W
+            if [ "$RV_PANE" = ingredients ]; then
+                RV_LINK_FONT_PX=$RV_INGREDIENT_FONT_PX
+                RV_LINK_PANE_W=$RV_INGREDIENT_W
+            fi
+            RV_LINK_PREFIX_PX=$(((RV_LINK_PREFIX_UNITS * RV_LINK_FONT_PX * 100 + (35 * RV_FONT_WIDTH_PERCENT) - 1) / (35 * RV_FONT_WIDTH_PERCENT)))
+            RV_LINK_W=$(((RV_LINK_PHRASE_UNITS * RV_LINK_FONT_PX * 100 + (35 * RV_FONT_WIDTH_PERCENT) - 1) / (35 * RV_FONT_WIDTH_PERCENT)))
+            RV_LINK_X=$((RV_TEXT_X + RV_LINK_PREFIX_PX))
+            RV_LINK_MAX=$((RV_PANE_X + RV_LINK_PANE_W - RV_LINK_X - 8))
+            [ "$RV_LINK_W" -gt "$RV_LINK_MAX" ] && RV_LINK_W=$RV_LINK_MAX
+            [ "$RV_LINK_W" -lt 4 ] && RV_LINK_W=4
+            RV_LINK_Y=$((RV_Y + RV_LINK_FONT_PX - 2))
+            rv_rect "$RV_LINK_X" "$RV_LINK_Y" "$RV_LINK_W" 2
+        fi
         RV_Y=$((RV_Y + RV_LINE_H))
         RV_PREVIOUS_KIND=$RV_KIND
         RV_RENDERED=$((RV_RENDERED + 1))
@@ -293,15 +348,24 @@ rv_draw_pane()
 rv_draw_cook()
 {
     rv_clear
-    rv_truncate "$RV_RECORD_TITLE" 34
-    rv_text 14 4 "$RV_TITLE_PT" bold "$RV_TRUNCATED"
-    rv_rect "$RV_INGREDIENT_W" "$RV_TITLE_H" "$RV_DIVIDER_W" "$((RV_END_Y - RV_TITLE_H))"
+    # The back button always occupies the top-left corner: with link history
+    # it steps back one recipe, and at the root it takes over END RECIPE's
+    # old job. The box must be at least as tall as a title-weight glyph cell
+    # (19pt is ~55px here) or the "<" has nowhere to sit but the bottom edge.
+    RV_BACK_X=6; RV_BACK_Y=4; RV_BACK_W=56; RV_BACK_H=58
+    rv_draw_outline "$RV_BACK_X" "$RV_BACK_Y" "$RV_BACK_W" "$RV_BACK_H" 2
+    RV_BACK_CELL_H=$(rv_pxh "$RV_TITLE_PT" 0)
+    RV_BACK_TEXT_Y=$((RV_BACK_Y + (RV_BACK_H - RV_BACK_CELL_H) / 2))
+    rv_text "$((RV_BACK_X + 18))" "$RV_BACK_TEXT_Y" "$RV_TITLE_PT" bold "<"
+    RV_TITLE_X=$((RV_BACK_X + RV_BACK_W + 8))
+    rv_truncate "$RV_RECORD_TITLE" 28
+    rv_text "$RV_TITLE_X" 4 "$RV_TITLE_PT" bold "$RV_TRUNCATED"
+    rv_rect "$RV_INGREDIENT_W" "$RV_TITLE_H" "$RV_DIVIDER_W" "$((RV_CONTENT_BOTTOM - RV_TITLE_H))"
     rv_text 10 69 "$RV_PANE_HEADER_PT" bold Ingredients
     rv_text "$((RV_INSTRUCTION_X + 10))" 69 "$RV_PANE_HEADER_PT" bold Instructions
     rv_draw_pane "$RV_TMP/ingredients.layout" 0 10 "$RV_INGREDIENT_SCROLL" "$RV_INGREDIENT_VISIBLE" "$RV_INGREDIENT_LINE_H" "$RV_INGREDIENT_CURSOR" ingredients
     rv_draw_pane "$RV_TMP/instructions.layout" "$RV_INSTRUCTION_X" "$((RV_INSTRUCTION_X + 16))" "$RV_INSTRUCTION_SCROLL" "$RV_INSTRUCTION_VISIBLE" "$RV_INSTRUCTION_LINE_H" "$RV_INSTRUCTION_CURSOR" instructions
-    rv_rect 0 "$RV_END_Y" "$RV_SCREEN_W" 2
-    rv_text 310 972 "$RV_END_PT" bold "END RECIPE"
+    rv_rect 0 "$RV_CONTENT_BOTTOM" "$RV_SCREEN_W" 2
     rv_log "render screen=cook title=$RV_RECORD_TITLE geometry=${RV_INGREDIENT_W}+${RV_DIVIDER_W}+${RV_INSTRUCTION_W} ingredient_scroll=$RV_INGREDIENT_SCROLL instruction_scroll=$RV_INSTRUCTION_SCROLL line_heights=$RV_INGREDIENT_LINE_H,$RV_INSTRUCTION_LINE_H"
     rv_refresh
     RV_PARTIAL_COUNT=0
@@ -418,18 +482,42 @@ rv_draw_search_partial()
 
 rv_layout_hit()
 {
-    # $1 layout $2 y $3 scroll $4 line-height $5 pane; sets record and kind.
-    RV_HIT_LINE=$(awk -F '\t' -v target="$2" -v scroll="$3" -v line_h="$4" \
-        -v pane="$5" -v top="$RV_CONTENT_TOP" -v bottom="$RV_CONTENT_BOTTOM" \
-        -v gap="$RV_INSTRUCTION_STEP_GAP" '
+    # $1 layout $2 x $3 y $4 scroll $5 line-height $6 pane $7 text-x $8 gap;
+    # sets record, kind, and link (link only when x lands on the resolved
+    # phrase, for instructions; whole-row for ingredients).
+    RV_HIT_LINE=$(awk -F '\t' -v target_x="$2" -v target_y="$3" -v scroll="$4" \
+        -v line_h="$5" -v pane="$6" -v text_x="$7" -v top="$RV_CONTENT_TOP" \
+        -v bottom="$RV_CONTENT_BOTTOM" -v gap="$8" \
+        -v font_px="$RV_INSTRUCTION_FONT_PX" -v percent="$RV_FONT_WIDTH_PERCENT" '
+        function to_px(units) {
+            return int((units * font_px * 100 + (35 * percent - 1)) / (35 * percent))
+        }
         {
             visual++
             if (visual <= scroll) next
             if (!started) { y = top; started = 1 }
-            if (pane == "instructions" && $4 == 1 && $2 == "item" &&
+            if ($4 == 1 && $2 == "item" &&
                 previous_kind == "item" && rendered > 0) y += gap
             if (y + line_h > bottom) exit
-            if (target >= y && target < y + line_h) { print $1 "\t" $2; exit }
+            if (target_y >= y && target_y < y + line_h) {
+                link = ""
+                if (pane == "instructions") {
+                    # Only the located phrase is the tap target, so a tap has
+                    # to land within its pixel span.
+                    if ($6 != "") {
+                        link_x0 = text_x + to_px($7)
+                        link_x1 = link_x0 + to_px($8)
+                        if (target_x >= link_x0 && target_x < link_x1) link = $6
+                    }
+                } else {
+                    # Ingredient links have no competing tap action, so the
+                    # whole row (matched by y alone, same as a check toggle)
+                    # is the target.
+                    link = $6
+                }
+                print $1 "\t" $2 "\t" link
+                exit
+            }
             y += line_h
             previous_kind = $2
             rendered++
@@ -437,6 +525,7 @@ rv_layout_hit()
     ' "$1")
     RV_HIT_RECORD=$(printf '%s\n' "$RV_HIT_LINE" | cut -f1)
     RV_HIT_KIND=$(printf '%s\n' "$RV_HIT_LINE" | cut -f2)
+    RV_HIT_LINK=$(printf '%s\n' "$RV_HIT_LINE" | cut -f3)
 }
 
 rv_partial_allowed()
@@ -484,7 +573,7 @@ rv_draw_cook_pane_partial()
         RV_PARTIAL_X=$RV_INSTRUCTION_X
         RV_PARTIAL_W=$RV_INSTRUCTION_W
     fi
-    RV_PARTIAL_H=$((RV_END_Y - RV_CONTENT_TOP))
+    RV_PARTIAL_H=$((RV_CONTENT_BOTTOM - RV_CONTENT_TOP))
     if ! rv_clear_region "$RV_PARTIAL_X" "$RV_CONTENT_TOP" "$RV_PARTIAL_W" "$RV_PARTIAL_H"; then
         rv_log "partial clear failed pane=$RV_PARTIAL_PANE; falling back to full"
         rv_draw_cook
@@ -507,6 +596,13 @@ rv_draw_cook_pane_partial()
 rv_handle_list_gesture()
 {
     RV_LIST_MAX=$((RV_FILTERED_COUNT - RV_LIST_VISIBLE)); [ "$RV_LIST_MAX" -lt 0 ] && RV_LIST_MAX=0
+    # The back button at the recipe list is the top of the navigation stack,
+    # so instead of unwinding to a previous recipe it exits the app.
+    if [ "$RV_GESTURE" = tap ] && [ "$RV_Y2" -lt "$RV_TITLE_H" ] && [ "$RV_X1" -lt 64 ]; then
+        RV_SCREEN=exit
+        rv_log "exit requested from recipe list"
+        return
+    fi
     case "$RV_GESTURE" in
         swipe-up)
             RV_SCROLL_BEFORE=$RV_LIST_SCROLL
@@ -530,6 +626,7 @@ rv_handle_list_gesture()
             [ "$RV_PICK" -le "$RV_FILTERED_COUNT" ] || return
             RV_PICK_ENTRY=$(sed -n "${RV_PICK}p" "$RV_FILTERED_LIST")
             RV_PICK_ORDINAL=$(printf '%s\n' "$RV_PICK_ENTRY" | cut -f1)
+            RV_NAV_STACK=
             rv_load_recipe "$RV_PICK_ORDINAL" || return 1
             RV_REDRAW=full
             ;;
@@ -583,6 +680,7 @@ rv_handle_search_gesture()
                 [ "$RV_PICK" -le "$RV_FILTERED_COUNT" ] || return
                 RV_PICK_ENTRY=$(sed -n "${RV_PICK}p" "$RV_FILTERED_LIST")
                 RV_PICK_ORDINAL=$(printf '%s\n' "$RV_PICK_ENTRY" | cut -f1)
+                RV_NAV_STACK=
                 rv_load_recipe "$RV_PICK_ORDINAL" || return 1
                 RV_REDRAW=full
                 return
@@ -630,13 +728,23 @@ rv_handle_search_gesture()
 
 rv_handle_cook_gesture()
 {
-    if [ "$RV_GESTURE" = tap ] && [ "$RV_Y2" -ge "$RV_END_Y" ]; then
-        RV_SCREEN=confirm
-        RV_REDRAW=full
-        rv_log "end requested uid=$RV_RECIPE_UID"
+    # The top-left back button is always present: with link history to
+    # unwind it steps back one recipe; at the root (nothing to go back to)
+    # it takes over END RECIPE's job of asking to return to the list.
+    if [ "$RV_GESTURE" = tap ] && [ "$RV_Y2" -lt "$RV_TITLE_H" ] && [ "$RV_X1" -lt 64 ]; then
+        if [ -n "$RV_NAV_STACK" ]; then
+            rv_nav_pop
+            rv_log "back navigated to ordinal=$RV_NAV_POPPED"
+            rv_load_recipe "$RV_NAV_POPPED" || return 1
+            RV_REDRAW=full
+        else
+            RV_SCREEN=confirm
+            RV_REDRAW=full
+            rv_log "end requested uid=$RV_RECIPE_UID"
+        fi
         return
     fi
-    [ "$RV_Y2" -ge "$RV_CONTENT_TOP" ] && [ "$RV_Y2" -lt "$RV_END_Y" ] || return
+    [ "$RV_Y2" -ge "$RV_CONTENT_TOP" ] && [ "$RV_Y2" -lt "$RV_CONTENT_BOTTOM" ] || return
     if [ "$RV_X1" -lt "$RV_INGREDIENT_W" ]; then
         case "$RV_GESTURE" in
             swipe-up)
@@ -650,8 +758,21 @@ rv_handle_cook_gesture()
                 if [ "$RV_INGREDIENT_SCROLL" -ne "$RV_SCROLL_BEFORE" ]; then RV_REDRAW=ingredients; RV_REDRAW_WAVEFORM=GC16; fi
                 ;;
             tap)
-                rv_layout_hit "$RV_TMP/ingredients.layout" "$RV_Y2" "$RV_INGREDIENT_SCROLL" "$RV_INGREDIENT_LINE_H" ingredients
-                if [ "$RV_HIT_KIND" = item ]; then RV_INGREDIENT_CURSOR=$RV_HIT_RECORD; rv_toggle_check "$RV_HIT_RECORD"; RV_REDRAW=ingredients; RV_REDRAW_WAVEFORM=DU; rv_log "ingredient tap index=$RV_HIT_RECORD checked=$RV_INGREDIENT_CHECKS"; fi
+                rv_layout_hit "$RV_TMP/ingredients.layout" "$RV_X2" "$RV_Y2" "$RV_INGREDIENT_SCROLL" "$RV_INGREDIENT_LINE_H" ingredients 10 "$RV_INGREDIENT_ITEM_GAP"
+                if [ "$RV_HIT_KIND" = item ] && [ -n "$RV_HIT_LINK" ]; then
+                    rv_uid_ordinal "$RV_HIT_LINK"
+                    if [ -n "$RV_UID_ORDINAL" ]; then
+                        rv_log "ingredient link followed target_uid=$RV_HIT_LINK ordinal=$RV_UID_ORDINAL"
+                        rv_nav_push "$RV_SELECTED_ORDINAL"
+                        rv_load_recipe "$RV_UID_ORDINAL" || return 1
+                        RV_REDRAW=full
+                    else
+                        rv_log "ingredient link target missing from library uid=$RV_HIT_LINK"
+                        RV_INGREDIENT_CURSOR=$RV_HIT_RECORD; rv_toggle_check "$RV_HIT_RECORD"; RV_REDRAW=ingredients; RV_REDRAW_WAVEFORM=DU
+                    fi
+                elif [ "$RV_HIT_KIND" = item ]; then
+                    RV_INGREDIENT_CURSOR=$RV_HIT_RECORD; rv_toggle_check "$RV_HIT_RECORD"; RV_REDRAW=ingredients; RV_REDRAW_WAVEFORM=DU; rv_log "ingredient tap index=$RV_HIT_RECORD checked=$RV_INGREDIENT_CHECKS"
+                fi
                 ;;
         esac
     elif [ "$RV_X1" -ge "$RV_INSTRUCTION_X" ]; then
@@ -667,8 +788,21 @@ rv_handle_cook_gesture()
                 if [ "$RV_INSTRUCTION_SCROLL" -ne "$RV_SCROLL_BEFORE" ]; then RV_REDRAW=instructions; RV_REDRAW_WAVEFORM=GC16; fi
                 ;;
             tap)
-                rv_layout_hit "$RV_TMP/instructions.layout" "$RV_Y2" "$RV_INSTRUCTION_SCROLL" "$RV_INSTRUCTION_LINE_H" instructions
-                if [ "$RV_HIT_KIND" = item ]; then RV_INSTRUCTION_CURSOR=$RV_HIT_RECORD; RV_REDRAW=instructions; RV_REDRAW_WAVEFORM=DU; rv_log "instruction tap index=$RV_HIT_RECORD"; fi
+                rv_layout_hit "$RV_TMP/instructions.layout" "$RV_X2" "$RV_Y2" "$RV_INSTRUCTION_SCROLL" "$RV_INSTRUCTION_LINE_H" instructions "$((RV_INSTRUCTION_X + 16))" "$RV_INSTRUCTION_STEP_GAP"
+                if [ "$RV_HIT_KIND" = item ] && [ -n "$RV_HIT_LINK" ]; then
+                    rv_uid_ordinal "$RV_HIT_LINK"
+                    if [ -n "$RV_UID_ORDINAL" ]; then
+                        rv_log "instruction link followed target_uid=$RV_HIT_LINK ordinal=$RV_UID_ORDINAL"
+                        rv_nav_push "$RV_SELECTED_ORDINAL"
+                        rv_load_recipe "$RV_UID_ORDINAL" || return 1
+                        RV_REDRAW=full
+                    else
+                        rv_log "instruction link target missing from library uid=$RV_HIT_LINK"
+                        RV_INSTRUCTION_CURSOR=$RV_HIT_RECORD; RV_REDRAW=instructions; RV_REDRAW_WAVEFORM=DU
+                    fi
+                elif [ "$RV_HIT_KIND" = item ]; then
+                    RV_INSTRUCTION_CURSOR=$RV_HIT_RECORD; RV_REDRAW=instructions; RV_REDRAW_WAVEFORM=DU; rv_log "instruction tap index=$RV_HIT_RECORD"
+                fi
                 ;;
         esac
     fi

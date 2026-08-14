@@ -9,17 +9,14 @@ RV_INGREDIENT_W=300
 RV_DIVIDER_W=2
 RV_INSTRUCTION_X=302
 RV_INSTRUCTION_W=456
-RV_END_Y=966
-RV_END_H=58
 RV_CONTENT_TOP=110
 RV_CONTENT_BOTTOM=958
 RV_TITLE_PT=19
 RV_LIST_PT=17
 RV_PANE_HEADER_PT=13
-RV_END_PT=13
 RV_INGREDIENT_PT=13
 RV_INSTRUCTION_PT=13
-RV_INGREDIENT_LEADING=1
+RV_INGREDIENT_LEADING=-4
 RV_INSTRUCTION_LEADING=1
 RV_FONT_WIDTH_PERCENT=${RV_FONT_WIDTH_PERCENT:-135}
 RV_LIST_ROW_H=64
@@ -49,6 +46,7 @@ RV_TOUCH_NATIVE_H=1024
 RV_TOUCH_ROTATION=${RV_TOUCH_ROTATION:-U}
 RV_LANDSCAPE_ORIENTATION=${RV_LANDSCAPE_ORIENTATION:-L}
 RV_INSTRUCTION_STEP_GAP=${RV_INSTRUCTION_STEP_GAP:-10}
+RV_INGREDIENT_ITEM_GAP=${RV_INGREDIENT_ITEM_GAP:-16}
 RV_PARTIAL_REFRESH=${RV_PARTIAL_REFRESH:-1}
 RV_PARTIAL_FULL_EVERY=${RV_PARTIAL_FULL_EVERY:-12}
 
@@ -110,7 +108,7 @@ rv_manifest_load()
             *) RV_ERROR="unknown manifest record: $RV_TYPE"; return 1 ;;
         esac
     done < "$RV_MANIFEST"
-    [ "$RV_SCHEMA" = "1" ] || { RV_ERROR="unsupported library schema: ${RV_SCHEMA:-missing}"; return 1; }
+    [ "$RV_SCHEMA" = "4" ] || { RV_ERROR="unsupported library schema: ${RV_SCHEMA:-missing}"; return 1; }
     case "$RV_DECLARED_COUNT" in ''|*[!0-9]*) RV_ERROR="invalid library recipe count"; return 1 ;; esac
     [ "$RV_DECLARED_COUNT" -gt 0 ] || { RV_ERROR="library is empty"; return 1; }
     [ "$RV_DECLARED_COUNT" -eq "$RV_ACTUAL_COUNT" ] || {
@@ -127,6 +125,12 @@ rv_recipe_field()
     RV_RECIPE_FILE=$(printf '%s\n' "$RV_RECIPE_ENTRY" | cut -f1)
     RV_RECIPE_UID=$(printf '%s\n' "$RV_RECIPE_ENTRY" | cut -f2)
     RV_RECIPE_TITLE=$(printf '%s\n' "$RV_RECIPE_ENTRY" | cut -f3-)
+}
+
+rv_uid_ordinal()
+{
+    # $1=uid; sets RV_UID_ORDINAL to the matching manifest ordinal, empty if none.
+    RV_UID_ORDINAL=$(awk -F "$RV_TAB" -v uid="$1" '$2 == uid { print NR; exit }' "$RV_RECIPE_LIST")
 }
 
 rv_checked_has()
@@ -152,6 +156,29 @@ rv_reset_session()
     RV_INGREDIENT_SCROLL=0
     RV_INSTRUCTION_SCROLL=0
     RV_SELECTED_ORDINAL=0
+    RV_NAV_STACK=
+}
+
+rv_nav_push()
+{
+    # $1=ordinal to remember as "came from" before following a recipe link.
+    if [ -n "$RV_NAV_STACK" ]; then
+        RV_NAV_STACK="$1 $RV_NAV_STACK"
+    else
+        RV_NAV_STACK=$1
+    fi
+}
+
+rv_nav_pop()
+{
+    # Sets RV_NAV_POPPED to the most recently visited ordinal; fails on an
+    # empty stack (opening a recipe directly from the list has nowhere to go).
+    [ -n "$RV_NAV_STACK" ] || { RV_NAV_POPPED=; return 1; }
+    RV_NAV_POPPED=${RV_NAV_STACK%% *}
+    case "$RV_NAV_STACK" in
+        *' '*) RV_NAV_STACK=${RV_NAV_STACK#* } ;;
+        *) RV_NAV_STACK= ;;
+    esac
 }
 
 rv_abandon()

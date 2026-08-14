@@ -39,7 +39,7 @@ class CompilerTests(unittest.TestCase):
             recipes = compiler.read_archive(archive)
             compiler.write_library(recipes, output)
             manifest = (output / "manifest.tsv").read_text(encoding="utf-8")
-            self.assertIn("SCHEMA\t1\nCOUNT\t2\n", manifest)
+            self.assertIn("SCHEMA\t4\nCOUNT\t2\n", manifest)
             self.assertLess(manifest.index("Apple Pie"), manifest.index("Zesty Soup"))
             record = (output / "0002.recipe").read_text(encoding="utf-8")
             self.assertTrue(record.startswith("TITLE\tZesty Soup\n"))
@@ -63,9 +63,97 @@ class CompilerTests(unittest.TestCase):
             recipe.instructions[1].text,
             "Stir the Ragu Base into the water. This is a soft wrap.",
         )
+        self.assertEqual(recipe.instructions[1].link_title, "Ragu Base")
         self.assertEqual(recipe.instructions[2].text, "Simmer for 10 minutes.")
+        self.assertEqual(recipe.instructions[2].link_title, "")
         self.assertEqual(recipe.instructions[-2], compiler.Line("section-header", "Notes:"))
         self.assertEqual(recipe.instructions[-1].text, "Keeps for two days.")
+
+    def test_recipe_links_resolve_against_the_compiled_library(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            archive = base / "fixture.paprikarecipes"
+            output = base / "library"
+            write_archive(
+                archive,
+                [
+                    {
+                        "uid": "main",
+                        "name": "Lasagna",
+                        "ingredients": "1 lasagna noodle",
+                        "directions": (
+                            "Make the [recipe:Ragu Sauce]. Then stir in the "
+                            "[recipe:Missing Side] for good measure."
+                        ),
+                    },
+                    {
+                        "uid": "sauce",
+                        "name": "Ragu Sauce",
+                        "ingredients": "1 tomato",
+                        "directions": "Simmer.",
+                    },
+                ],
+            )
+            recipes = compiler.read_archive(archive)
+            compiler.write_library(recipes, output)
+            ordinal = 1 if recipes[0].title == "Lasagna" else 2
+            record = (output / f"{ordinal:04d}.recipe").read_text(encoding="utf-8")
+            self.assertIn(
+                "INSTRUCTION\titem\tMake the Ragu Sauce. Then stir in the Missing Side for good measure.\tsauce\tRagu Sauce\n",
+                record,
+            )
+
+    def test_ingredient_links_resolve_as_whole_line_with_no_phrase_column(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            archive = base / "fixture.paprikarecipes"
+            output = base / "library"
+            write_archive(
+                archive,
+                [
+                    {
+                        "uid": "main",
+                        "name": "Deep-Dish Apple Pie",
+                        "ingredients": "1 [recipe:Basic Double-Crust Pie Dough] (uncooked)\n2 apples",
+                        "directions": "Bake.",
+                    },
+                    {
+                        "uid": "dough",
+                        "name": "Basic Double-Crust Pie Dough",
+                        "ingredients": "1 cup flour",
+                        "directions": "Mix.",
+                    },
+                ],
+            )
+            recipes = compiler.read_archive(archive)
+            compiler.write_library(recipes, output)
+            ordinal = 1 if recipes[0].title == "Deep-Dish Apple Pie" else 2
+            record = (output / f"{ordinal:04d}.recipe").read_text(encoding="utf-8")
+            # Unlike an instruction link, the ingredient record carries no
+            # phrase column: the whole line (quantity and all) is the target.
+            self.assertIn("INGREDIENT\titem\t1 Basic Double-Crust Pie Dough (uncooked)\tdough\n", record)
+            self.assertIn("INGREDIENT\titem\t2 apples\t\n", record)
+
+    def test_dangling_recipe_link_stays_plain_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            archive = base / "fixture.paprikarecipes"
+            output = base / "library"
+            write_archive(
+                archive,
+                [
+                    {
+                        "uid": "solo",
+                        "name": "Solo Dish",
+                        "ingredients": "1 egg",
+                        "directions": "Serve with [recipe:Nonexistent Side].",
+                    }
+                ],
+            )
+            recipes = compiler.read_archive(archive)
+            compiler.write_library(recipes, output)
+            record = (output / "0001.recipe").read_text(encoding="utf-8")
+            self.assertIn("INSTRUCTION\titem\tServe with Nonexistent Side.\t\t\n", record)
 
     def test_inline_markup_is_line_local_and_unmatched_markers_survive(self) -> None:
         self.assertEqual(compiler.strip_inline_markup("4. **Preheat oven**. Now."), "4. Preheat oven. Now.")
