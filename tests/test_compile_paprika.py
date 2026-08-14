@@ -155,6 +155,29 @@ class CompilerTests(unittest.TestCase):
             record = (output / "0001.recipe").read_text(encoding="utf-8")
             self.assertIn("INSTRUCTION\titem\tServe with Nonexistent Side.\t\t\n", record)
 
+    def test_recipe_with_no_directions_compiles_with_empty_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            archive = base / "fixture.paprikarecipes"
+            output = base / "library"
+            write_archive(
+                archive,
+                [
+                    {
+                        "uid": "rub",
+                        "name": "Dry Rub",
+                        "ingredients": "4 Tbsp paprika\n2 Tbsp chili powder",
+                        "directions": "",
+                    }
+                ],
+            )
+            recipes = compiler.read_archive(archive)
+            self.assertEqual(recipes[0].instructions, ())
+            compiler.write_library(recipes, output)
+            record = (output / "0001.recipe").read_text(encoding="utf-8")
+            self.assertNotIn("INSTRUCTION", record)
+            self.assertIn("INGREDIENT\titem\t4 Tbsp paprika\t\n", record)
+
     def test_inline_markup_is_line_local_and_unmatched_markers_survive(self) -> None:
         self.assertEqual(compiler.strip_inline_markup("4. **Preheat oven**. Now."), "4. Preheat oven. Now.")
         self.assertEqual(compiler.strip_inline_markup("bring water ** to a boil"), "bring water ** to a boil")

@@ -177,8 +177,9 @@ def compile_recipe(payload: object, entry_name: str = "<recipe>") -> Recipe:
         instructions.extend(notes)
     if not ingredients:
         raise CompileError(f"{entry_name}: ingredients contain no items")
-    if not instructions:
-        raise CompileError(f"{entry_name}: directions contain no items")
+    # Some real recipes (a spice rub, "combine and serve") have no separate
+    # directions beyond the ingredient list itself, so an empty instructions
+    # pane is valid rather than a sign of a malformed entry.
     return Recipe(uid, title, ingredients, tuple(instructions))
 
 

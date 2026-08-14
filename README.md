@@ -52,15 +52,18 @@ The target is a Paperwhite 2 on firmware 5.12.2.2 (758×1024, 212 DPI), with
 KOReader's FBInk at `/mnt/us/koreader/fbink` and raw touch at
 `/dev/input/event1`.
 
-## Build the 19-recipe library
+## Build the recipe library
 
-From this repository:
+From this repository, against the full 229-recipe archive:
 
 ```powershell
 python tools/compile_paprika.py `
-  ..\recipe-viewer\paprika-export-examples\bulk-export.paprikarecipes `
+  ..\recipe-viewer\paprika-export-examples\full-set-cleaned.paprikarecipes `
   --output build\library
 ```
+
+(`bulk-export.paprikarecipes`, a 19-recipe subset, is handy for quicker
+iteration.)
 
 The compiler reads ZIP entries containing gzip-compressed Paprika JSON. It
 normalizes text, splits ingredients and instruction paragraphs, classifies
@@ -70,10 +73,13 @@ links (`[recipe:Title]`, appearing in ingredients and directions alike) are
 resolved by title against the other recipes in the same archive: a match
 records the target's uid on that record, plus the exact linked phrase text
 for instruction steps (so the device can locate and underline just that
-span); a title with no match in the archive falls back to plain text. It
-emits `manifest.tsv` plus one ordinal `.recipe` record file per recipe.
-Photos and every other unused Paprika field are excluded. `build/` is ignored
-because it contains the personal, deployable library artifact.
+span); a title with no match in the archive falls back to plain text. A
+recipe with no directions at all (an ingredients-only rub or mix) compiles
+fine with an empty instructions pane; only an empty ingredient list is
+rejected as malformed. It emits `manifest.tsv` plus one ordinal `.recipe`
+record file per recipe. Photos and every other unused Paprika field are
+excluded. `build/` is ignored because it contains the personal, deployable
+library artifact.
 
 ## Install
 
