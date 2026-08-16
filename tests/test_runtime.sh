@@ -66,10 +66,21 @@ rv_filter_recipes
 rv_clamp -4 0 10; assert_eq "$RV_CLAMPED" 0 "lower clamp"
 rv_clamp 40 0 10; assert_eq "$RV_CLAMPED" 10 "upper clamp"
 
+# Resume detection distinguishes a normal ~1s poll cycle from the wall-clock
+# jump the Kindle's suspend/resume leaves behind mid-cycle.
+rv_detect_resume 100 101 5 && { echo "FAIL: normal poll gap treated as a resume" >&2; failures=$((failures + 1)); }
+rv_detect_resume 100 106 5 || { echo "FAIL: large wall-clock gap not detected as a resume" >&2; failures=$((failures + 1)); }
+rv_detect_resume 0 106 5 && { echo "FAIL: invalid before-timestamp still triggered a resume" >&2; failures=$((failures + 1)); }
+
 # Gesture classification.
 rv_classify_gesture 100 200 105 205 900; assert_eq "$RV_GESTURE" hold "hold"
 rv_classify_gesture 100 500 100 300 200; assert_eq "$RV_GESTURE" swipe-up "swipe up"
 rv_classify_gesture 100 200 102 202 100; assert_eq "$RV_GESTURE" tap "tap"
+
+# Little-endian hex-byte-to-decimal conversion, done in pure arithmetic
+# (no fork) since it runs up to three times per captured touch record.
+rv_hex_le32 64 00 00 00; assert_eq "$RV_HEX32" 100 "hex32 low byte"
+rv_hex_le32 ff ff ff ff; assert_eq "$RV_HEX32" 4294967295 "hex32 all bytes set"
 
 # Decode the Kindle's 16-byte, little-endian input_event records.
 touch_fixture="$TMP_ROOT/touch.bin"
@@ -210,8 +221,8 @@ rv_toggle_check 2
 RV_INGREDIENT_CURSOR=2
 : > "$RV_DISPLAY_LOG"
 rv_draw_cook
-assert_contains "$RV_DISPLAY_LOG" $'rect\t300\t66\t2\t892' "pane geometry"
-assert_contains "$RV_DISPLAY_LOG" $'rect\t0\t958\t758\t2' "content-bottom rule geometry"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t300\t66\t2\t948' "pane geometry"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t0\t1014\t758\t2' "content-bottom rule geometry"
 assert_not_contains "$RV_DISPLAY_LOG" $'END RECIPE' "END RECIPE bar is gone; the back button replaced it"
 assert_contains "$RV_DISPLAY_LOG" $'rect\t6\t4\t56\t2' "back button box is always drawn"
 assert_contains "$RV_DISPLAY_LOG" $'text\t24\t5\t19\tbold\t<' "back button arrow is vertically centered"
@@ -226,7 +237,7 @@ assert_contains "$RV_DISPLAY_LOG" $'rect\t417\t185\t131\t2' "linked instruction 
 assert_not_contains "$RV_DISPLAY_LOG" $'rect\t318\t185\t412\t2' "underline no longer spans the whole step"
 assert_not_contains "$RV_DISPLAY_LOG" $'rect\t3\t149\t3\t37' "ingredient cursor gutter removed"
 assert_contains "$RV_DISPLAY_LOG" $'text\t318\t237\t13\tregular\tSimmer for 10 minutes.' "instruction step gap"
-if awk -F '\t' '$1 == "text" && ($2 == 10 || $2 == 318) && $3 >= 958 { found=1 } END { exit !found }' "$RV_DISPLAY_LOG"; then
+if awk -F '\t' '$1 == "text" && ($2 == 10 || $2 == 318) && $3 >= 1014 { found=1 } END { exit !found }' "$RV_DISPLAY_LOG"; then
     echo "FAIL: body text crossed the content bottom boundary" >&2
     failures=$((failures + 1))
 fi
@@ -285,14 +296,14 @@ assert_contains "$RV_DISPLAY_LOG" $'rect\t398\t650\t300\t3' "end button"
 : > "$RV_DISPLAY_LOG"
 RV_PARTIAL_COUNT=0
 rv_draw_cook_pane_partial ingredients DU
-assert_contains "$RV_DISPLAY_LOG" $'clear-region\t0\t110\t300\t848' "ingredient partial clear"
-assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t0\t110\t300\t848\tDU' "ingredient partial refresh"
+assert_contains "$RV_DISPLAY_LOG" $'clear-region\t0\t110\t300\t904' "ingredient partial clear"
+assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t0\t110\t300\t904\tDU' "ingredient partial refresh"
 assert_not_contains "$RV_DISPLAY_LOG" $'refresh\t0\t0\t758\t1024' "ingredient partial avoids full refresh"
 
 : > "$RV_DISPLAY_LOG"
 rv_draw_cook_pane_partial instructions GC16
-assert_contains "$RV_DISPLAY_LOG" $'clear-region\t302\t110\t456\t848' "instruction partial clear"
-assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t302\t110\t456\t848\tGC16' "instruction partial refresh"
+assert_contains "$RV_DISPLAY_LOG" $'clear-region\t302\t110\t456\t904' "instruction partial clear"
+assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t302\t110\t456\t904\tGC16' "instruction partial refresh"
 
 # Periodic cleanup falls back to a full flashing refresh.
 : > "$RV_DISPLAY_LOG"

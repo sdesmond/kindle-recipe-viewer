@@ -3,7 +3,13 @@
 
 rv_hex_le32()
 {
-    printf '%d' "0x$4$3$2$1" 2>/dev/null
+    # $1..$4 = little-endian hex byte pairs; sets RV_HEX32. Pure arithmetic
+    # instead of `printf "%d" "0x..."` in a $(...) subshell: this runs up to
+    # three times per captured record, and forking that often was still
+    # measurably slow on the Kindle's CPU even after batching the hex dump.
+    # `0x` is the portable C-style hex literal; ksh-style `16#` base literals
+    # are not guaranteed on the Kindle's actual /bin/sh.
+    RV_HEX32=$(( 0x$4$3$2$1 ))
 }
 
 rv_decode_touch_file()
@@ -19,25 +25,27 @@ rv_decode_touch_file()
     RV_START_USEC=
     RV_END_SEC=
     RV_END_USEC=
-    RV_BYTES=$(wc -c < "$RV_TOUCH_FILE" 2>/dev/null)
-    RV_BYTES=${RV_BYTES:-0}
-    RV_RECORDS=$((RV_BYTES / 16))
-    RV_EVENT_INDEX=0
-    while [ "$RV_EVENT_INDEX" -lt "$RV_RECORDS" ]; do
-        RV_OFFSET=$((RV_EVENT_INDEX * 16))
-        RV_EVENT_LINE=$(od -An -tx1 -j "$RV_OFFSET" -N 16 "$RV_TOUCH_FILE" 2>/dev/null)
+    # One bulk hex dump instead of one `od` process spawn per 16-byte record:
+    # a capture window can hold dozens of records, and forking `od` that many
+    # times per gesture was the dominant source of input lag on the Kindle's
+    # slow CPU. `-w16` keeps each line exactly one input_event record; `-v`
+    # stops od from collapsing repeated-looking lines and silently dropping
+    # records.
+    RV_HEXDUMP=$(od -An -v -w16 -tx1 "$RV_TOUCH_FILE" 2>/dev/null)
+    RV_OLD_IFS=$IFS
+    IFS='
+'
+    for RV_EVENT_LINE in $RV_HEXDUMP; do
+        IFS=$RV_OLD_IFS
         set -- $RV_EVENT_LINE
         RV_B1=${1:-}; RV_B2=${2:-}; RV_B3=${3:-}; RV_B4=${4:-}
         RV_B5=${5:-}; RV_B6=${6:-}; RV_B7=${7:-}; RV_B8=${8:-}
         RV_B9=${9:-}; shift 9
         RV_B10=${1:-}; RV_B11=${2:-}; RV_B12=${3:-}; RV_B13=${4:-}
         RV_B14=${5:-}; RV_B15=${6:-}; RV_B16=${7:-}
-        if [ -z "$RV_B16" ]; then
-            RV_EVENT_INDEX=$((RV_EVENT_INDEX + 1))
-            continue
-        fi
-        RV_SEC=$(rv_hex_le32 "$RV_B1" "$RV_B2" "$RV_B3" "$RV_B4")
-        RV_USEC=$(rv_hex_le32 "$RV_B5" "$RV_B6" "$RV_B7" "$RV_B8")
+        [ -n "$RV_B16" ] || continue
+        rv_hex_le32 "$RV_B1" "$RV_B2" "$RV_B3" "$RV_B4"; RV_SEC=$RV_HEX32
+        rv_hex_le32 "$RV_B5" "$RV_B6" "$RV_B7" "$RV_B8"; RV_USEC=$RV_HEX32
         if [ -z "$RV_START_SEC" ]; then
             RV_START_SEC=$RV_SEC
             RV_START_USEC=$RV_USEC
@@ -46,11 +54,10 @@ rv_decode_touch_file()
         RV_END_USEC=$RV_USEC
         RV_TYPE_HEX="$RV_B10$RV_B9"
         RV_CODE_HEX="$RV_B12$RV_B11"
-        RV_VALUE_HEX="$RV_B16$RV_B15$RV_B14$RV_B13"
         if [ "$RV_TYPE_HEX" = "0003" ] && [ "$RV_CODE_HEX" = "0035" ]; then
-            RV_TOUCH_X=$(rv_hex_le32 "$RV_B13" "$RV_B14" "$RV_B15" "$RV_B16")
+            rv_hex_le32 "$RV_B13" "$RV_B14" "$RV_B15" "$RV_B16"; RV_TOUCH_X=$RV_HEX32
         elif [ "$RV_TYPE_HEX" = "0003" ] && [ "$RV_CODE_HEX" = "0036" ]; then
-            RV_TOUCH_Y=$(rv_hex_le32 "$RV_B13" "$RV_B14" "$RV_B15" "$RV_B16")
+            rv_hex_le32 "$RV_B13" "$RV_B14" "$RV_B15" "$RV_B16"; RV_TOUCH_Y=$RV_HEX32
         fi
         if [ -n "$RV_TOUCH_X" ] && [ -n "$RV_TOUCH_Y" ]; then
             if [ -z "$RV_X1" ]; then
@@ -60,8 +67,8 @@ rv_decode_touch_file()
             RV_X2=$RV_TOUCH_X
             RV_Y2=$RV_TOUCH_Y
         fi
-        RV_EVENT_INDEX=$((RV_EVENT_INDEX + 1))
     done
+    IFS=$RV_OLD_IFS
     [ -n "$RV_X1" ] || return 1
     # Subtract before multiplying so this remains safe on the Kindle's 32-bit shell.
     RV_DURATION_MS=$(((RV_END_SEC - RV_START_SEC) * 1000 + (RV_END_USEC - RV_START_USEC) / 1000))
@@ -113,11 +120,19 @@ rv_capture_gesture()
     fi
     RV_CAPTURE="$RV_TMP/touch-events.bin"
     rm -f "$RV_CAPTURE"
-    dd if="$RV_TOUCH_SOURCE" of="$RV_CAPTURE" bs=16 2>/dev/null &
+    # A quick tap rarely produces RV_TOUCH_CAPTURE_RECORDS worth of data on
+    # its own, so `dd` racing a background timeout (instead of always
+    # sleeping the full window) is what actually shortens tap latency; the
+    # record count mainly lets a fast-moving swipe finish early too, instead
+    # of both waiting out RV_TOUCH_POLL_SECONDS regardless of how quickly the
+    # data arrived.
+    dd if="$RV_TOUCH_SOURCE" of="$RV_CAPTURE" bs=16 count="$RV_TOUCH_CAPTURE_RECORDS" 2>/dev/null &
     RV_DD_PID=$!
-    sleep 1
-    kill "$RV_DD_PID" 2>/dev/null
+    ( sleep "$RV_TOUCH_POLL_SECONDS"; kill "$RV_DD_PID" 2>/dev/null ) &
+    RV_TIMEOUT_PID=$!
     wait "$RV_DD_PID" 2>/dev/null
+    kill "$RV_TIMEOUT_PID" 2>/dev/null
+    wait "$RV_TIMEOUT_PID" 2>/dev/null
     rv_decode_touch_file "$RV_CAPTURE" || return 1
     rv_classify_gesture "$RV_X1" "$RV_Y1" "$RV_X2" "$RV_Y2" "$RV_DURATION_MS"
 }

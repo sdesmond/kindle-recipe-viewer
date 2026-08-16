@@ -6,6 +6,7 @@ RV_LOG=${RV_LOG:-$RV_APP_ROOT/debug.log}
 RV_PARTIAL_REFRESH=${RV_PARTIAL_REFRESH:-1}
 RV_PARTIAL_FULL_EVERY=${RV_PARTIAL_FULL_EVERY:-12}
 RV_INSTRUCTION_STEP_GAP=${RV_INSTRUCTION_STEP_GAP:-10}
+RV_WAKE_GAP_SECONDS=${RV_WAKE_GAP_SECONDS:-4}
 RV_TOUCH_ROTATION=${RV_TOUCH_ROTATION:-U}
 RV_TOUCH_SOURCE=${RV_TOUCH_EVENT_FILE:-/dev/input/event1}
 RV_FONT_REGULAR=${RV_FONT_REGULAR:-$RV_APP_ROOT/fonts/AtkinsonHyperlegible-Regular.ttf}
@@ -57,8 +58,26 @@ rv_draw_list
 
 # Runs until the back button on the recipe list requests an exit; there is
 # no idle timeout, so the app only closes when the reader asks it to.
+RV_TICK=$(date +%s 2>/dev/null || echo 0)
 while :; do
-    if rv_capture_gesture; then
+    RV_TICK_BEFORE=$RV_TICK
+    RV_CAPTURED=0
+    rv_capture_gesture && RV_CAPTURED=1
+    RV_TICK=$(date +%s 2>/dev/null || echo 0)
+    # The Kindle's suspend/resume leaves the e-ink panel blank/stale, and this
+    # app has no other way to learn it happened, so a wall-clock jump across
+    # one ~1s poll cycle stands in for a resume notification.
+    if rv_detect_resume "$RV_TICK_BEFORE" "$RV_TICK" "$RV_WAKE_GAP_SECONDS"; then
+        rv_log "resume detected after sleep; forcing full refresh"
+        case "$RV_SCREEN" in
+            list) rv_draw_list ;;
+            search) rv_draw_search ;;
+            cook) rv_draw_cook ;;
+            confirm) rv_draw_confirm ;;
+        esac
+        continue
+    fi
+    if [ "$RV_CAPTURED" -eq 1 ]; then
         RV_SCREEN_BEFORE=$RV_SCREEN
         RV_REDRAW=none
         RV_REDRAW_WAVEFORM=DU

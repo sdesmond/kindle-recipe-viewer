@@ -10,7 +10,7 @@ RV_DIVIDER_W=2
 RV_INSTRUCTION_X=302
 RV_INSTRUCTION_W=456
 RV_CONTENT_TOP=110
-RV_CONTENT_BOTTOM=958
+RV_CONTENT_BOTTOM=1014
 RV_TITLE_PT=19
 RV_LIST_PT=17
 RV_PANE_HEADER_PT=13
@@ -49,6 +49,14 @@ RV_INSTRUCTION_STEP_GAP=${RV_INSTRUCTION_STEP_GAP:-10}
 RV_INGREDIENT_ITEM_GAP=${RV_INGREDIENT_ITEM_GAP:-16}
 RV_PARTIAL_REFRESH=${RV_PARTIAL_REFRESH:-1}
 RV_PARTIAL_FULL_EVERY=${RV_PARTIAL_FULL_EVERY:-12}
+# How long rv_capture_gesture waits for touch data before giving up on an
+# idle poll (a real tap rarely produces enough records to satisfy
+# RV_TOUCH_CAPTURE_RECORDS on its own, so this timeout is what mostly
+# governs tap latency) and how many 16-byte records make it return early
+# once a gesture is producing data quickly (mainly benefits swipes, which
+# generate records much faster than a tap does).
+RV_TOUCH_POLL_SECONDS=${RV_TOUCH_POLL_SECONDS:-0.5}
+RV_TOUCH_CAPTURE_RECORDS=${RV_TOUCH_CAPTURE_RECORDS:-48}
 
 rv_log()
 {
@@ -67,6 +75,17 @@ rv_clamp()
     [ "$RV_CLAMPED" -lt "$2" ] && RV_CLAMPED=$2
     [ "$RV_CLAMPED" -gt "$3" ] && RV_CLAMPED=$3
     return 0
+}
+
+rv_detect_resume()
+{
+    # $1=before $2=after $3=threshold-seconds. The main loop's touch poll
+    # takes about a second per cycle; the Kindle's suspend/resume freezes the
+    # whole process mid-cycle, so a wall-clock jump far past that is the only
+    # reliable signal that the device just woke (the e-ink panel comes back
+    # blank/stale and needs a full flashing refresh, not a partial one).
+    [ "$1" -gt 0 ] && [ "$2" -ge "$1" ] || return 1
+    [ "$(($2 - $1))" -ge "$3" ]
 }
 
 rv_truncate()

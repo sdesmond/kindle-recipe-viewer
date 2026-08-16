@@ -196,8 +196,19 @@ Runtime host overrides are `RV_DISPLAY_COMMAND`, `RV_TOUCH_EVENT_FILE`,
 `RV_APP_ROOT`, `RV_LIBRARY_ROOT`, `RV_LOG`,
 `RV_FBINK_COMMAND`, `RV_EIPS_COMMAND`, `RV_FONT_REGULAR`, and `RV_FONT_BOLD`.
 Refresh tuning overrides are `RV_PARTIAL_REFRESH` (`1` or `0`),
-`RV_PARTIAL_FULL_EVERY` (default `12`), and `RV_INSTRUCTION_STEP_GAP`
-(default `10` px).
+`RV_PARTIAL_FULL_EVERY` (default `12`), `RV_INSTRUCTION_STEP_GAP`
+(default `10` px), and `RV_WAKE_GAP_SECONDS` (default `4`) — the wall-clock
+jump across one touch-poll cycle that's treated as a wake from sleep and
+forces a full refresh, since the Kindle gives this app no other signal that
+it slept.
+Touch tuning overrides are `RV_TOUCH_POLL_SECONDS` (default `0.5`) — how long
+each poll waits for touch data before giving up, which is what mostly
+governs tap latency since a single tap rarely produces enough records to
+satisfy the count below on its own — and `RV_TOUCH_CAPTURE_RECORDS` (default
+`48`), the number of 16-byte `input_event` records that let a capture return
+early once a fast-moving gesture (a swipe) is already producing data, instead
+of also waiting out the full poll window. Lowering `RV_TOUCH_POLL_SECONDS`
+trades slower/interrupted swipe recognition for snappier taps.
 The display override receives high-level `clear`, `refresh`, `rect`, and `text`
 commands plus `clear-region` and `refresh-region`, enabling golden command-log
 tests without a Kindle emulator.
