@@ -5,8 +5,10 @@ The device runtime must remain POSIX `sh`; the Kindle has neither Python nor
 BusyBox. Keep host-side compilation and deployment separate from the deployed
 runtime.
 
-Do not modify the sibling `kindle-chess-viewer` or `recipe-viewer`
-repositories. They are read-only references.
+Before changing the Kindle runtime, display, touch handling, or deployment,
+read [`.agents/memories/MEMORY.md`](.agents/memories/MEMORY.md) and the runtime
+memory it links. Record new durable hardware findings there rather than
+duplicating them in this file.
 
 Record durable hardware findings in `.agents/memories/` and link every memory
 from `.agents/memories/MEMORY.md`.
