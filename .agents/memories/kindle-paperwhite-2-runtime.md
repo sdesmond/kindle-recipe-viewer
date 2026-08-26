@@ -155,6 +155,89 @@ lever, but prototype and verify row spacing on-device before trusting it,
 and the golden `tests/test_runtime.sh` geometry assertions will need
 updating either way.
 
+As of 2026-08-26: the owner reported two symptoms — swipes on the recipe
+list/cook screen were sometimes registered as a press, and each swipe only
+scrolled a small distance, taking many repeats to move any real distance.
+Root-caused both in `rv_classify_gesture`/`rv_capture_gesture` and the
+scroll-handling code in `ui.sh`, without on-device verification (no hardware
+access this session):
+- Misclassified swipes: `rv_classify_gesture`'s swipe branch required
+  `RV_ABS_DY >= 80`; anything under that (and not itself falling in the tiny
+  `hold` window) fell through to `tap`. A live capture is always well under
+  the `hold` gesture's 800ms dwell requirement (bounded by
+  `RV_TOUCH_POLL_SECONDS`, default 0.5s), so `hold` is effectively
+  unreachable outside a replay fixture — meaning the 80px floor was the only
+  real branch point, and it was being missed by ordinary, deliberate swipes
+  whose capture window ended (poll timeout, or the
+  `RV_TOUCH_CAPTURE_RECORDS` early-exit) before the finger travelled that
+  far. This is exactly the "swipe completeness" risk flagged in the entry
+  above. Lowered the threshold to 50px (still comfortably above the 40px
+  jitter floor the `hold` branch assumes for a stationary touch) and raised
+  `RV_TOUCH_CAPTURE_RECORDS` from 48 to 96 so a genuine swipe's `dd` has more
+  room to accumulate real vertical travel before the record-count early-exit
+  cuts it off; a stationary tap produces far too few records for the higher
+  cap to add any tap latency, since it's still governed by the
+  `RV_TOUCH_POLL_SECONDS` timeout.
+- Short scroll distance: every swipe handler (`rv_handle_list_gesture`,
+  `rv_handle_cook_gesture`'s ingredient/instruction panes) advanced scroll
+  position by a flat `5` rows regardless of how many rows the pane actually
+  shows — on the cook screen's ~23-26 visible rows that was under a quarter
+  of the pane per swipe. Replaced with `(visible rows - RV_SCROLL_OVERLAP_ROWS)`
+  (new constant in `core.sh`, value `2`), i.e. a near-full-page swipe that
+  keeps a couple of rows of context between pages, applied to the list and
+  both cook-screen panes. Deliberately left the search-results pane's swipe
+  increment at `5` — `RV_SEARCH_RESULTS_VISIBLE` is only `6`, so `5` was
+  already a near-full-page jump there and didn't need the same fix.
+Both fixes are code-level/logical (verified via `tests/test_runtime.sh`,
+including a new regression case for a moderate-distance swipe that used to
+misclassify as a tap), not confirmed against the physical touch controller's
+real event rate/timing — worth re-checking on-device, and revisiting the
+50px/96-record/4-row constants specifically if either symptom recurs.
+
+This first pass was tested on-device without ever running `tools/deploy.ps1`
+first, so the owner correctly saw no behavior change at all — see
+[[feedback_offer_deploy_after_change]]. After actually deploying,
+`RV_SCROLL_OVERLAP_ROWS=2` proved too small a reading anchor in practice: on
+the "baked turkey meatballs" recipe the owner reported the ingredient swipe
+"misses a line or two" and the instruction swipe left "just one line" of the
+prior position visible — 2 rows of overlap is not enough to visually
+re-orient after an e-ink refresh. Raised to `RV_SCROLL_OVERLAP_ROWS=4`
+(untested on-device as of this edit).
+
+Next report: still inconsistent specifically on `ingredients`, worse on
+recipes with long ingredient names that wrap ("baked turkey meatballs") —
+"sometimes it scrolls as I would expect, but other times it goes too far."
+Root cause was architectural, not a constant-tuning problem:
+`RV_INGREDIENT_VISIBLE`/`RV_INSTRUCTION_VISIBLE` are `(content window px) /
+(line height)` — a flat estimate that assumes zero space between items. But
+`rv_draw_pane`'s actual break condition is pixel-exact and does add
+`RV_INGREDIENT_ITEM_GAP`/`RV_INSTRUCTION_STEP_GAP` between items, so how many
+rows *really* fit on a given screen varies with that screen's specific mix
+of short single-line items (many gaps) vs. long wrapped items (few gaps,
+more consecutive lines). Paging by the flat estimate could therefore both
+overshoot (skipping content the reader never saw, on a gap-heavy screen)
+and undershoot, depending on what was on screen. Fixed by having
+`rv_draw_pane` record its own real, already-gap-aware `RV_RENDERED` count
+into `RV_INGREDIENT_RENDERED_ROWS`/`RV_INSTRUCTION_RENDERED_ROWS` after every
+draw, and switching both panes' swipe handlers in
+`rv_handle_cook_gesture` to page by `(that real count -
+RV_SCROLL_OVERLAP_ROWS)` instead of the flat visible constant (floored at 1
+row of forward progress). `rv_load_recipe` seeds both with the old flat
+estimate as a fallback for the (normally unreachable) case where a swipe
+lands before the first real draw. This is exact for the forward direction
+(swipe-up: the just-drawn page's real row count is authoritative for what
+was actually on screen); the backward direction (swipe-down) reuses the same
+forward count as a symmetric approximation rather than computing a true
+reverse page-fit, since that would need a second gap-aware walk backward
+through the layout file — flagged as the remaining known gap if swipe-down
+specifically still misbehaves. Added a regression test in
+`tests/test_runtime.sh` using a synthetic 30-item one-line gap-dense
+layout (18 of 30 fit in the real 904px content window vs. a flat estimate of
+26) to lock in that swipes page by the real count. Still unverified
+on-device as of this edit — the list/search screens were not touched since
+their rows are uniform height (no per-item wrapping or gaps), so the flat
+estimate is already exact there.
+
 The first version of that `rv_hex_le32` rewrite used ksh-style `$((16#ff))`
 base-literal arithmetic and shipped a hard crash on every recipe open (any
 touch decode). The Kindle's `/bin/sh` behaves like `dash`, confirmed on a

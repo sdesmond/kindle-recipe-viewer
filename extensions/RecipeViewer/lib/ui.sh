@@ -194,6 +194,11 @@ rv_load_recipe()
     RV_INSTRUCTION_LINE_H=$(rv_pxh "$RV_INSTRUCTION_PT" "$RV_INSTRUCTION_LEADING")
     RV_INGREDIENT_VISIBLE=$(((RV_CONTENT_BOTTOM - RV_CONTENT_TOP) / RV_INGREDIENT_LINE_H))
     RV_INSTRUCTION_VISIBLE=$(((RV_CONTENT_BOTTOM - RV_CONTENT_TOP) / RV_INSTRUCTION_LINE_H))
+    # Sane fallback for a swipe that somehow lands before the first real
+    # draw of this recipe's panes; rv_draw_pane overwrites these with the
+    # actual gap-aware count as soon as it runs.
+    RV_INGREDIENT_RENDERED_ROWS=$RV_INGREDIENT_VISIBLE
+    RV_INSTRUCTION_RENDERED_ROWS=$RV_INSTRUCTION_VISIBLE
     RV_INGREDIENT_GAP_ROWS=$(((RV_INGREDIENT_ITEMS * RV_INGREDIENT_ITEM_GAP + RV_INGREDIENT_LINE_H - 1) / RV_INGREDIENT_LINE_H))
     RV_INGREDIENT_MAX_SCROLL=$((RV_INGREDIENT_ROWS + RV_INGREDIENT_GAP_ROWS - RV_INGREDIENT_VISIBLE)); [ "$RV_INGREDIENT_MAX_SCROLL" -lt 0 ] && RV_INGREDIENT_MAX_SCROLL=0
     RV_INSTRUCTION_GAP_ROWS=$(((RV_INSTRUCTION_ITEMS * RV_INSTRUCTION_STEP_GAP + RV_INSTRUCTION_LINE_H - 1) / RV_INSTRUCTION_LINE_H))
@@ -343,6 +348,17 @@ rv_draw_pane()
         RV_PREVIOUS_KIND=$RV_KIND
         RV_RENDERED=$((RV_RENDERED + 1))
     done < "$RV_LAYOUT"
+    # RV_RENDERED is the exact, gap-aware count of rows this call actually
+    # fit on screen -- unlike RV_INGREDIENT_VISIBLE/RV_INSTRUCTION_VISIBLE
+    # (RV_VISIBLE above), which assumes zero inter-item gap and so over- or
+    # under-estimates how much of a page a swipe should advance by depending
+    # on how gap-dense this particular screenful of content is (many short
+    # items vs. a few long wrapped ones). Scroll math should page by this
+    # real count, not the flat estimate.
+    case "$RV_PANE" in
+        ingredients) RV_INGREDIENT_RENDERED_ROWS=$RV_RENDERED ;;
+        instructions) RV_INSTRUCTION_RENDERED_ROWS=$RV_RENDERED ;;
+    esac
 }
 
 rv_draw_cook()
@@ -606,12 +622,12 @@ rv_handle_list_gesture()
     case "$RV_GESTURE" in
         swipe-up)
             RV_SCROLL_BEFORE=$RV_LIST_SCROLL
-            RV_LIST_SCROLL=$((RV_LIST_SCROLL + 5)); rv_clamp "$RV_LIST_SCROLL" 0 "$RV_LIST_MAX"; RV_LIST_SCROLL=$RV_CLAMPED
+            RV_LIST_SCROLL=$((RV_LIST_SCROLL + RV_LIST_VISIBLE - RV_SCROLL_OVERLAP_ROWS)); rv_clamp "$RV_LIST_SCROLL" 0 "$RV_LIST_MAX"; RV_LIST_SCROLL=$RV_CLAMPED
             [ "$RV_LIST_SCROLL" -eq "$RV_SCROLL_BEFORE" ] || RV_REDRAW=list
             ;;
         swipe-down)
             RV_SCROLL_BEFORE=$RV_LIST_SCROLL
-            RV_LIST_SCROLL=$((RV_LIST_SCROLL - 5)); rv_clamp "$RV_LIST_SCROLL" 0 "$RV_LIST_MAX"; RV_LIST_SCROLL=$RV_CLAMPED
+            RV_LIST_SCROLL=$((RV_LIST_SCROLL - (RV_LIST_VISIBLE - RV_SCROLL_OVERLAP_ROWS))); rv_clamp "$RV_LIST_SCROLL" 0 "$RV_LIST_MAX"; RV_LIST_SCROLL=$RV_CLAMPED
             [ "$RV_LIST_SCROLL" -eq "$RV_SCROLL_BEFORE" ] || RV_REDRAW=list
             ;;
         tap)
@@ -749,12 +765,14 @@ rv_handle_cook_gesture()
         case "$RV_GESTURE" in
             swipe-up)
                 RV_SCROLL_BEFORE=$RV_INGREDIENT_SCROLL
-                RV_INGREDIENT_SCROLL=$((RV_INGREDIENT_SCROLL + 5)); rv_clamp "$RV_INGREDIENT_SCROLL" 0 "$RV_INGREDIENT_MAX_SCROLL"; RV_INGREDIENT_SCROLL=$RV_CLAMPED
+                RV_PANE_STEP=$((RV_INGREDIENT_RENDERED_ROWS - RV_SCROLL_OVERLAP_ROWS)); [ "$RV_PANE_STEP" -lt 1 ] && RV_PANE_STEP=1
+                RV_INGREDIENT_SCROLL=$((RV_INGREDIENT_SCROLL + RV_PANE_STEP)); rv_clamp "$RV_INGREDIENT_SCROLL" 0 "$RV_INGREDIENT_MAX_SCROLL"; RV_INGREDIENT_SCROLL=$RV_CLAMPED
                 if [ "$RV_INGREDIENT_SCROLL" -ne "$RV_SCROLL_BEFORE" ]; then RV_REDRAW=ingredients; RV_REDRAW_WAVEFORM=GC16; fi
                 ;;
             swipe-down)
                 RV_SCROLL_BEFORE=$RV_INGREDIENT_SCROLL
-                RV_INGREDIENT_SCROLL=$((RV_INGREDIENT_SCROLL - 5)); rv_clamp "$RV_INGREDIENT_SCROLL" 0 "$RV_INGREDIENT_MAX_SCROLL"; RV_INGREDIENT_SCROLL=$RV_CLAMPED
+                RV_PANE_STEP=$((RV_INGREDIENT_RENDERED_ROWS - RV_SCROLL_OVERLAP_ROWS)); [ "$RV_PANE_STEP" -lt 1 ] && RV_PANE_STEP=1
+                RV_INGREDIENT_SCROLL=$((RV_INGREDIENT_SCROLL - RV_PANE_STEP)); rv_clamp "$RV_INGREDIENT_SCROLL" 0 "$RV_INGREDIENT_MAX_SCROLL"; RV_INGREDIENT_SCROLL=$RV_CLAMPED
                 if [ "$RV_INGREDIENT_SCROLL" -ne "$RV_SCROLL_BEFORE" ]; then RV_REDRAW=ingredients; RV_REDRAW_WAVEFORM=GC16; fi
                 ;;
             tap)
@@ -779,12 +797,14 @@ rv_handle_cook_gesture()
         case "$RV_GESTURE" in
             swipe-up)
                 RV_SCROLL_BEFORE=$RV_INSTRUCTION_SCROLL
-                RV_INSTRUCTION_SCROLL=$((RV_INSTRUCTION_SCROLL + 5)); rv_clamp "$RV_INSTRUCTION_SCROLL" 0 "$RV_INSTRUCTION_MAX_SCROLL"; RV_INSTRUCTION_SCROLL=$RV_CLAMPED
+                RV_PANE_STEP=$((RV_INSTRUCTION_RENDERED_ROWS - RV_SCROLL_OVERLAP_ROWS)); [ "$RV_PANE_STEP" -lt 1 ] && RV_PANE_STEP=1
+                RV_INSTRUCTION_SCROLL=$((RV_INSTRUCTION_SCROLL + RV_PANE_STEP)); rv_clamp "$RV_INSTRUCTION_SCROLL" 0 "$RV_INSTRUCTION_MAX_SCROLL"; RV_INSTRUCTION_SCROLL=$RV_CLAMPED
                 if [ "$RV_INSTRUCTION_SCROLL" -ne "$RV_SCROLL_BEFORE" ]; then RV_REDRAW=instructions; RV_REDRAW_WAVEFORM=GC16; fi
                 ;;
             swipe-down)
                 RV_SCROLL_BEFORE=$RV_INSTRUCTION_SCROLL
-                RV_INSTRUCTION_SCROLL=$((RV_INSTRUCTION_SCROLL - 5)); rv_clamp "$RV_INSTRUCTION_SCROLL" 0 "$RV_INSTRUCTION_MAX_SCROLL"; RV_INSTRUCTION_SCROLL=$RV_CLAMPED
+                RV_PANE_STEP=$((RV_INSTRUCTION_RENDERED_ROWS - RV_SCROLL_OVERLAP_ROWS)); [ "$RV_PANE_STEP" -lt 1 ] && RV_PANE_STEP=1
+                RV_INSTRUCTION_SCROLL=$((RV_INSTRUCTION_SCROLL - RV_PANE_STEP)); rv_clamp "$RV_INSTRUCTION_SCROLL" 0 "$RV_INSTRUCTION_MAX_SCROLL"; RV_INSTRUCTION_SCROLL=$RV_CLAMPED
                 if [ "$RV_INSTRUCTION_SCROLL" -ne "$RV_SCROLL_BEFORE" ]; then RV_REDRAW=instructions; RV_REDRAW_WAVEFORM=GC16; fi
                 ;;
             tap)

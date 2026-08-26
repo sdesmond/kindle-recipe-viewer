@@ -101,7 +101,13 @@ rv_classify_gesture()
     RV_DY=$((RV_Y2 - RV_Y1)); RV_ABS_DY=$RV_DY; [ "$RV_ABS_DY" -lt 0 ] && RV_ABS_DY=$((-RV_ABS_DY))
     if [ "$RV_DX" -lt 40 ] && [ "$RV_ABS_DY" -lt 40 ] && [ "$RV_DURATION_MS" -ge 800 ]; then
         RV_GESTURE=hold
-    elif [ "$RV_ABS_DY" -ge 80 ]; then
+    # A live capture window is bounded well under 800ms (RV_TOUCH_POLL_SECONDS),
+    # so this DY check is the only branch a real swipe can actually reach; an
+    # 80px floor was routinely missed by genuine scrolling swipes whose
+    # capture got cut short (poll timeout or the RV_TOUCH_CAPTURE_RECORDS
+    # early-exit), misreading them as taps/presses. 50px still clears the
+    # ~40px jitter floor the hold branch assumes for a stationary touch.
+    elif [ "$RV_ABS_DY" -ge 50 ]; then
         if [ "$RV_DY" -lt 0 ]; then RV_GESTURE=swipe-up; else RV_GESTURE=swipe-down; fi
     else
         RV_GESTURE=tap

@@ -76,6 +76,10 @@ rv_detect_resume 0 106 5 && { echo "FAIL: invalid before-timestamp still trigger
 rv_classify_gesture 100 200 105 205 900; assert_eq "$RV_GESTURE" hold "hold"
 rv_classify_gesture 100 500 100 300 200; assert_eq "$RV_GESTURE" swipe-up "swipe up"
 rv_classify_gesture 100 200 102 202 100; assert_eq "$RV_GESTURE" tap "tap"
+# A capture window cut short mid-drag (poll timeout or the record-count
+# early-exit) should still read as a scroll, not a press, once it clears the
+# jitter floor a stationary tap/hold is expected to stay under.
+rv_classify_gesture 100 200 100 260 200; assert_eq "$RV_GESTURE" swipe-down "moderate swipe distance no longer misread as a tap"
 
 # Little-endian hex-byte-to-decimal conversion, done in pure arithmetic
 # (no fork) since it runs up to three times per captured touch record.
@@ -184,17 +188,39 @@ assert_eq "$RV_NAV_STACK" "" "opening a recipe from the list clears the back sta
 rv_load_recipe 2
 
 # Pane scrolling remains independent and clamps.
-RV_INGREDIENT_MAX_SCROLL=20; RV_INSTRUCTION_MAX_SCROLL=30
+RV_INGREDIENT_MAX_SCROLL=40; RV_INSTRUCTION_MAX_SCROLL=40
 RV_INGREDIENT_SCROLL=0; RV_INSTRUCTION_SCROLL=0
 RV_REDRAW=none; RV_GESTURE=swipe-up; RV_X1=100; RV_Y2=400
 rv_handle_cook_gesture
-assert_eq "$RV_INGREDIENT_SCROLL" 5 "ingredient scroll"
+assert_eq "$RV_INGREDIENT_SCROLL" "$((RV_INGREDIENT_RENDERED_ROWS - RV_SCROLL_OVERLAP_ROWS))" "ingredient scroll"
 assert_eq "$RV_INSTRUCTION_SCROLL" 0 "instruction scroll independence"
 assert_eq "$RV_REDRAW,$RV_REDRAW_WAVEFORM" "ingredients,GC16" "ingredient scroll refresh intent"
 RV_X1=500
 rv_handle_cook_gesture
-assert_eq "$RV_INSTRUCTION_SCROLL" 5 "instruction scroll"
+assert_eq "$RV_INSTRUCTION_SCROLL" "$((RV_INSTRUCTION_RENDERED_ROWS - RV_SCROLL_OVERLAP_ROWS))" "instruction scroll"
 assert_eq "$RV_REDRAW,$RV_REDRAW_WAVEFORM" "instructions,GC16" "instruction scroll refresh intent"
+
+# A screen full of short, gap-separated one-line items fits noticeably fewer
+# rows than RV_INGREDIENT_VISIBLE assumes, because that estimate divides the
+# content window by line height alone and ignores RV_INGREDIENT_ITEM_GAP
+# entirely. This is exactly what made a swipe overshoot on recipes whose
+# item mix (many short entries vs. a few long wrapped ones) differs from
+# screen to screen: paging by the flat estimate skipped past real content.
+: > "$RV_TMP/dense.layout"
+RV_ROW_I=1
+while [ "$RV_ROW_I" -le 30 ]; do
+    printf '%d\titem\tItem %d\t1\t50\t\t\t\n' "$RV_ROW_I" "$RV_ROW_I" >> "$RV_TMP/dense.layout"
+    RV_ROW_I=$((RV_ROW_I + 1))
+done
+rv_draw_pane "$RV_TMP/dense.layout" 0 10 0 "$RV_INGREDIENT_VISIBLE" "$RV_INGREDIENT_LINE_H" -1 ingredients
+[ "$RV_INGREDIENT_RENDERED_ROWS" -lt "$RV_INGREDIENT_VISIBLE" ] || {
+    echo "FAIL: gap-dense pane should render fewer rows than the flat visible estimate (rendered=$RV_INGREDIENT_RENDERED_ROWS visible=$RV_INGREDIENT_VISIBLE)" >&2
+    failures=$((failures + 1))
+}
+RV_INGREDIENT_SCROLL=0; RV_INGREDIENT_MAX_SCROLL=100
+RV_REDRAW=none; RV_GESTURE=swipe-up; RV_X1=100; RV_Y2=400
+rv_handle_cook_gesture
+assert_eq "$RV_INGREDIENT_SCROLL" "$((RV_INGREDIENT_RENDERED_ROWS - RV_SCROLL_OVERLAP_ROWS))" "swipe pages by the real rendered row count, not the flat visible estimate"
 
 # The back button is always present; at the root of the nav stack (no link
 # history) it takes over END RECIPE's old job and still asks first. Cancel

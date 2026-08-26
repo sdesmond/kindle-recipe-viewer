@@ -24,6 +24,12 @@ RV_SEARCH_BAR_Y=66
 RV_SEARCH_BAR_H=64
 RV_LIST_TOP=130
 RV_LIST_VISIBLE=13
+# A swipe scrolls (visible rows - this) so the page after a swipe still
+# shares a few rows with the one before it as a reading anchor, instead of a
+# flat row count that only moved a small fraction of a full pane per swipe.
+# 2 left too little (owner: it "misses a line or two"/"just one line" of the
+# old position on the cook screen panes) to actually re-orient by eye.
+RV_SCROLL_OVERLAP_ROWS=4
 RV_SEARCH_FIELD_X=10
 RV_SEARCH_FIELD_Y=10
 RV_SEARCH_FIELD_W=738
@@ -54,9 +60,13 @@ RV_PARTIAL_FULL_EVERY=${RV_PARTIAL_FULL_EVERY:-12}
 # RV_TOUCH_CAPTURE_RECORDS on its own, so this timeout is what mostly
 # governs tap latency) and how many 16-byte records make it return early
 # once a gesture is producing data quickly (mainly benefits swipes, which
-# generate records much faster than a tap does).
+# generate records much faster than a tap does). A record cap that is too
+# low relative to the touch controller's real event rate can end a swipe's
+# capture before it accumulates its true vertical travel, under-reporting
+# dy and risking a swipe/tap misclassification; a tap still won't produce
+# anywhere near this many records, so raising it doesn't add tap latency.
 RV_TOUCH_POLL_SECONDS=${RV_TOUCH_POLL_SECONDS:-0.5}
-RV_TOUCH_CAPTURE_RECORDS=${RV_TOUCH_CAPTURE_RECORDS:-48}
+RV_TOUCH_CAPTURE_RECORDS=${RV_TOUCH_CAPTURE_RECORDS:-96}
 
 rv_log()
 {
