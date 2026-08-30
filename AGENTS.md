@@ -13,3 +13,8 @@ duplicating them in this file.
 Record durable hardware findings in `.agents/memories/` and link every memory
 from `.agents/memories/MEMORY.md`.
 
+## Git and GitHub conventions
+
+Never add co-author trailers (e.g. `Co-Authored-By`, `Claude-Session`) to
+commit messages or pull request descriptions in this repository.
+
