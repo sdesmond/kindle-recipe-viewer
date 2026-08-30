@@ -1,0 +1,10 @@
+{
+  "workflow": "speckit",
+  "specName": "001-recipe-scaling",
+  "branch": "001-recipe-scaling",
+  "selectedAt": "2026-08-30T18:55:07.858Z",
+  "currentStep": "specify",
+  "status": "draft",
+  "history": [],
+  "telemetryInstanceId": "6176fd39-607b-4ccb-85ad-0ce7b2a944a2"
+}
