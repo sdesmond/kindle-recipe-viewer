@@ -127,8 +127,8 @@ remain at the same reading position.
 
 Drawn from the ingredient text actually present in the sample library.
 
-- **Package and container sizes must not scale.** "1 (28-oz) Can Diced Tomatoes" at 2x is "2 (28-oz) Cans Diced Tomatoes" — you buy two of the same can, you do not buy a 56 oz can. Same for "3 (4.3 oz) packages dry ramen" and "1 15-ounce container ricotta cheese".
-- **Stated equivalents must stay consistent with the amount they restate.** "1 cup (236 ml) whole milk" at 2x must not become "2 cups (236 ml) whole milk" — either both numbers move together or the line is flagged as needing attention.
+- **Package and container sizes must not scale, but their leading counts may be fractional.** "1 (28-oz) Can Diced Tomatoes" at 1.5x is "1 1/2 (28-oz) Cans Diced Tomatoes" — the package size stays 28 oz. Same for "3 (4.3 oz) packages dry ramen" and "1 15-ounce container ricotta cheese".
+- **Stated equivalents must stay consistent with the amount they restate.** "1 cup (236 ml) whole milk" at 2x must not become "2 cups (236 ml) whole milk" — either both numbers move together or the line is flagged as needing attention. This includes clear parenthetical bare counts such as "1/2 c. chopped celery (about 2 stalks)" at 2x → "1 c. chopped celery (about 4 stalks)", and defined stick measures such as "1/2 cup (1 stick) butter" at 2x → "1 cup (2 sticks) butter".
 - **Trailing equivalents.** "8 ounces whole-milk mozzarella cheese, shredded (about 2 cups)" and "4 ounces Parmesan cheese, grated (about 2 cups)" restate the leading amount later in the line.
 - **Ranges written two ways.** "1-2 cups", "4-5 garlic cloves", and "10 to 12 lasagna noodles" all express ranges.
 - **Uncommon fractions produced by division.** 1/3 cup at 1/2x is 1/6 cup; 1/4 teaspoon at 1/3x is 1/12 teaspoon. What does the cook see?
@@ -163,18 +163,18 @@ Drawn from the ingredient text actually present in the sample library.
 - **FR-009**: The system MUST scale both endpoints of an amount written as a range, whether written with a hyphen ("1-2 cups", "4-5 garlic cloves") or the word "to" ("10 to 12 lasagna noodles").
 - **FR-010**: The system MUST NOT scale a package or container size — a measurement that describes the unit the ingredient is sold in rather than the quantity used ("1 (28-oz) Can", "3 (4.3 oz) packages", "1 15-ounce container"). The count of packages MUST still scale.
 - **FR-011**: The system MUST NOT scale numbers that are not quantities of an ingredient: oven temperatures, times, percentages ("93% lean"), and equipment sizes ("5 Quart Sauce Pan").
-- **FR-012**: When a line states the same quantity twice in different units ("1 cup (236 ml) whole milk", "8 ounces ... (about 2 cups)"), the system MUST either scale both statements consistently or leave the line unscaled and flag it (FR-020). It MUST NOT scale one statement and leave the other.
+- **FR-012**: When a line states the same quantity twice in different units or as a clear parenthetical bare count ("1 cup (236 ml) whole milk", "8 ounces ... (about 2 cups)", "1/2 c. celery (about 2 stalks)"), the system MUST either scale both statements consistently or leave the line unscaled and flag it (FR-020). It MUST NOT scale one statement and leave the other.
 - **FR-013**: Lines containing no scalable amount MUST be left exactly as written, and MUST NOT be flagged.
 - **FR-014**: Section headers MUST never be scaled or flagged.
 
 **How amounts are written**
 
-- **FR-015**: Scaled amounts MUST be presented as whole numbers, common cooking fractions, or mixed numbers. Decimal amounts MUST never be shown as the result of scaling.
-- **FR-016**: The fractions the system may produce are limited to halves, thirds, quarters, and eighths — 1/2, 1/3, 2/3, 1/4, 3/4, 1/8, 3/8, 5/8, 7/8. Fractions outside this set (1/5, 2/5, 1/6, 1/7, 1/9, 1/16, and so on) MUST never appear.
-- **FR-017**: When a scaled amount reads more naturally in a neighbouring unit of the same measuring family, the system MUST present it in that unit. Specifically, an amount MUST be promoted to the larger unit when the result is at least half of that larger unit and is expressible under FR-016 (3 teaspoons → 1 tablespoon; 8 tablespoons → 1/2 cup; 16 ounces → 1 pound), and MUST be demoted to a smaller unit when the amount is not expressible under FR-016 in its current unit but is in the smaller one (1/6 cup → 2 2/3 tablespoons).
+- **FR-015**: Scaled amounts MUST be presented as whole numbers, exact reduced fractions, or mixed numbers. Decimal amounts MUST never be shown as the result of scaling.
+- **FR-016**: The system MUST preserve an exact rational amount rather than rounding it to a more familiar fraction. Uncommon fractions such as 1/6 and 1/16 are allowed when no more natural exact form is available.
+- **FR-017**: When a scaled amount reads more naturally in a neighbouring unit of the same measuring family, the system MUST present it in that unit. Specifically, an amount MUST be promoted to the larger unit when the result is at least half of that larger unit and has a natural representation (3 teaspoons → 1 tablespoon; 8 tablespoons → 1/2 cup; 16 ounces → 1 pound), and MUST be demoted to a smaller unit when that gives a more natural exact form (1/6 cup → 2 2/3 tablespoons; 1/16 cup → 1 tablespoon). A 1/16 teaspoon MUST render as “a pinch of”.
 - **FR-018**: An amount MUST NOT be rewritten into a unit that reads less naturally than the one it was written in — "2 tablespoons" MUST stay "2 tablespoons" rather than becoming "1/8 cup".
 - **FR-019**: Metric amounts MUST scale within metric units and MUST NOT be converted into US customary units, or vice versa.
-- **FR-020**: When no combination of unit and common fraction expresses a scaled amount exactly, the system MUST present the nearest expressible amount and MUST mark it as an approximation.
+- **FR-020**: When no more natural exact unit representation exists, the system MUST render the exact reduced fraction and MUST NOT round it or mark it as an approximation (for example, 1 1/6 ounces).
 - **FR-021**: The system MUST preserve the unit spelling and abbreviation style used by the recipe ("T", "tsp.", "Tbsp.", "cup", "C", "ounce", "oz", "lb.") rather than rewriting every line into one house style, except where FR-017 changes the unit itself. Where the unit changes, its written form MUST match how that unit is normally written in cooking.
 - **FR-022**: The system MUST adjust the plural form of a unit or countable noun to agree with the scaled amount where the recipe's own wording makes that adjustment unambiguous ("1 cup" → "2 cups").
 - **FR-023**: All text on the ingredient line other than the amounts the system scaled MUST be carried through unchanged, including notes ("divided", "plus more as needed", "or to taste"), brand names, and preparation instructions.
@@ -205,7 +205,7 @@ Drawn from the ingredient text actually present in the sample library.
 - **Scale Factor**: The multiplier currently applied to the open recipe. Session-scoped, resets with the recipe. One value at a time, chosen from a fixed set.
 - **Measured Amount**: A quantity found in ingredient text — a value (whole, fraction, mixed, or a range of these), an optional unit, and the role it plays in the line (quantity to use, package size, stated equivalent, or non-quantity). Only quantities-to-use and their equivalents are scaled.
 - **Unit Family**: A set of units that convert cleanly among themselves — US volume (teaspoon, tablespoon, fluid ounce, cup, pint, quart, gallon), US weight (ounce, pound), metric volume (millilitre, litre), metric weight (gram, kilogram), and count (no unit). Amounts move only within their own family.
-- **Common Cooking Fraction**: The closed set of fractions the system is allowed to display — halves, thirds, quarters, eighths.
+- **Exact Fraction**: A reduced rational value the scaler writes when a more natural unit conversion is unavailable. Fractions are never rounded merely to fit a fixed display set.
 - **Ingredient Line Classification**: The outcome of interpreting one ingredient line — scaled, unchanged because it holds nothing to scale, or flagged because it holds an amount the system could not confidently interpret.
 
 ## Success Criteria *(mandatory)*
@@ -213,7 +213,7 @@ Drawn from the ingredient text actually present in the sample library.
 ### Measurable Outcomes
 
 - **SC-001**: A cook can change the scale of an open recipe in a single interaction, without navigating away from the recipe and without losing their place in it.
-- **SC-002**: Across every ingredient line in the sample library, scaling by 1/2x, 2x, and 3x produces zero amounts written as decimals and zero fractions outside the common set of halves, thirds, quarters, and eighths.
+- **SC-002**: Across every ingredient line in the sample library, scaling by 1/2x, 2x, and 3x produces zero decimal amounts introduced by the scaler; all introduced fractions are exact reduced rationals.
 - **SC-003**: 100% of the unit-normalization cases the request names — 3 teaspoons reading as 1 tablespoon, 8 tablespoons reading as 1/2 cup — produce the stated result.
 - **SC-004**: Scaling a recipe and then returning it to its original scale reproduces the original ingredient text exactly, for every recipe in the sample library.
 - **SC-005**: Repeatedly changing the scale — for example 2x, then 1/2x, then 3x — yields the same result as applying the final factor once, for every recipe in the sample library.

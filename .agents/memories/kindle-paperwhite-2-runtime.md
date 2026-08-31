@@ -72,6 +72,15 @@ retain LF endings; `.gitattributes` enforces this for fresh clones.
 The Kindle has POSIX shell tools but no Python or BusyBox. Data files must be
 parsed as records and must never be sourced as shell code.
 
+As of 2026-08-30: FBInk word-wraps the scale label `1 1/2x` when drawn in
+Atkinson Hyperlegible Bold at 19 pt from x=642 (the original 120 px-wide
+badge has only 110 px after its left padding). Device `debug.log` confirms
+that FBInk receives the complete string but renders two lines, leaving `1`
+visible in the badge and `1/2x` below its refresh region. Any badge that uses
+this label must either provide more usable horizontal width or draw the label
+at a smaller point size; a host display-command test cannot catch this
+because it does not perform FBInk's physical text wrapping.
+
 As of 2026-08-16: waking the device from sleep leaves the e-ink panel
 blank/stale (only whatever the reader draws next, via a normal partial
 refresh, becomes visible) because Kindle suspend/resume gives this app no

@@ -8,3 +8,6 @@ extensions/RecipeViewer/touch-events.bin
 
 # generated AI tool links
 .claude/skills
+
+# scratch Paprika export used to build the scaling test corpus
+/all-recipes.paprikarecipes

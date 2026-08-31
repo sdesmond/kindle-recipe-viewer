@@ -19,6 +19,7 @@ mkdir -p "$RV_TMP"
 
 . "$RV_APP_ROOT/lib/core.sh"
 . "$RV_APP_ROOT/lib/touch.sh"
+. "$RV_APP_ROOT/lib/scale.sh"
 . "$RV_APP_ROOT/lib/ui.sh"
 
 rv_reset_session
@@ -106,7 +107,7 @@ RV_TOUCH_ROTATION=U
 
 # Recipe layout and positional duplicate checks.
 rv_load_recipe 2
-assert_eq "$RV_INGREDIENT_ROWS" 5 "ingredient rows"
+assert_eq "$RV_INGREDIENT_ROWS" 11 "ingredient rows"
 assert_eq "$(sed -n '2p' "$RV_TMP/instructions.layout" | cut -f3)" "Stir the Ragu Base into the water." "instruction wrap boundary"
 assert_eq "$(sed -n '2p' "$RV_TMP/instructions.layout" | cut -f4)" 1 "instruction first-line marker"
 assert_eq "$(sed -n '3p' "$RV_TMP/instructions.layout" | cut -f4)" 0 "instruction continuation marker"
@@ -164,20 +165,24 @@ assert_eq "$RV_INSTRUCTION_CURSOR" 2 "off-phrase tap on a linked step sets curso
 assert_eq "$RV_SCREEN" cook "off-phrase tap stays on the same recipe"
 
 # Tapping the phrase itself navigates and remembers where we came from.
+RV_SCALE_INDEX=2
 RV_REDRAW=none; RV_INSTRUCTION_CURSOR=-1; RV_X1=500; RV_X2=500; RV_Y2=$RV_LINK_Y
 rv_handle_cook_gesture
 assert_eq "$RV_SELECTED_ORDINAL" 1 "tapping the linked phrase navigates to its target recipe"
 assert_eq "$RV_RECORD_TITLE" "Apple Pie" "navigated recipe is loaded"
 assert_eq "$RV_REDRAW" full "linked navigation requests a full redraw"
 assert_eq "$RV_NAV_STACK" 2 "navigating via a link remembers the originating ordinal"
+assert_eq "$RV_SCALE_INDEX" 0 "FR-006: following a link resets the scale to 1x"
 
 # The back button (top-left title bar) returns to the recipe the link came from.
+RV_SCALE_INDEX=3
 RV_REDRAW=none; RV_GESTURE=tap; RV_X1=10; RV_Y2=20
 rv_handle_cook_gesture
 assert_eq "$RV_SELECTED_ORDINAL" 2 "back button returns to the originating recipe"
 assert_eq "$RV_RECORD_TITLE" "Zesty Soup" "back navigation reloads the originating recipe"
 assert_eq "$RV_REDRAW" full "back navigation requests a full redraw"
 assert_eq "$RV_NAV_STACK" "" "back navigation empties the stack once exhausted"
+assert_eq "$RV_SCALE_INDEX" 0 "FR-006: unwinding a link also resets the scale to 1x"
 
 # Opening a recipe fresh from the list clears any stale back-navigation stack.
 RV_NAV_STACK=99
@@ -209,7 +214,7 @@ assert_eq "$RV_REDRAW,$RV_REDRAW_WAVEFORM" "instructions,GC16" "instruction scro
 : > "$RV_TMP/dense.layout"
 RV_ROW_I=1
 while [ "$RV_ROW_I" -le 30 ]; do
-    printf '%d\titem\tItem %d\t1\t50\t\t\t\n' "$RV_ROW_I" "$RV_ROW_I" >> "$RV_TMP/dense.layout"
+    printf '%d\titem\tItem %d\t1\t50\t\t\t\t\t0\n' "$RV_ROW_I" "$RV_ROW_I" >> "$RV_TMP/dense.layout"
     RV_ROW_I=$((RV_ROW_I + 1))
 done
 rv_draw_pane "$RV_TMP/dense.layout" 0 10 0 "$RV_INGREDIENT_VISIBLE" "$RV_INGREDIENT_LINE_H" -1 ingredients
@@ -234,12 +239,14 @@ RV_X2=$RV_CONFIRM_CANCEL_X; RV_Y2=$((RV_CONFIRM_BUTTON_Y + 20))
 rv_handle_confirm_gesture
 assert_eq "$RV_SCREEN" cook "cancel returns to recipe"
 assert_eq "$RV_INGREDIENT_CHECKS" ',2,' "cancel preserves checks"
+RV_SCALE_INDEX=4
 RV_GESTURE=tap; RV_X1=10; RV_Y2=20
 rv_handle_cook_gesture
 RV_X2=$RV_CONFIRM_END_X; RV_Y2=$((RV_CONFIRM_BUTTON_Y + 20))
 rv_handle_confirm_gesture
 assert_eq "$RV_SCREEN" list "confirmed end returns to list"
 assert_eq "$RV_INGREDIENT_CHECKS" ',' "confirmed end clears checks"
+assert_eq "$RV_SCALE_INDEX" 0 "FR-006: ending the recipe from the confirm screen resets the scale to 1x"
 
 # Golden geometry, calculated 212-DPI advances, and title truncation.
 rv_load_recipe 2
@@ -252,6 +259,13 @@ assert_contains "$RV_DISPLAY_LOG" $'rect\t0\t1014\t758\t2' "content-bottom rule 
 assert_not_contains "$RV_DISPLAY_LOG" $'END RECIPE' "END RECIPE bar is gone; the back button replaced it"
 assert_contains "$RV_DISPLAY_LOG" $'rect\t6\t4\t56\t2' "back button box is always drawn"
 assert_contains "$RV_DISPLAY_LOG" $'text\t24\t5\t19\tbold\t<' "back button arrow is vertically centered"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t590\t4\t162\t2' "scale badge top edge"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t590\t60\t162\t2' "scale badge bottom edge"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t590\t4\t2\t58' "scale badge left edge"
+assert_contains "$RV_DISPLAY_LOG" $'rect\t750\t4\t2\t58' "scale badge right edge"
+assert_contains "$RV_DISPLAY_LOG" $'text\t600\t5\t19\tbold\t1x' "scale badge shows 1x by default"
+rv_truncate "This Is A Very Long Recipe Title Indeed" 22
+assert_eq "$RV_TRUNCATED" "This Is A Very Long..." "cook title truncation narrows to 22 chars for the badge"
 assert_eq "$(rv_pxh "$RV_INGREDIENT_PT" "$RV_INGREDIENT_LEADING")" 34 "ingredient line height"
 assert_eq "$(rv_pxh "$RV_INSTRUCTION_PT" "$RV_INSTRUCTION_LEADING")" 39 "instruction line height"
 rv_truncate "1234567890" 8; assert_eq "$RV_TRUNCATED" "12345..." "title truncation"
@@ -338,6 +352,76 @@ rv_draw_cook_pane_partial ingredients DU
 assert_contains "$RV_DISPLAY_LOG" $'refresh\t0\t0\t758\t1024' "partial cleanup full refresh"
 assert_eq "$RV_PARTIAL_COUNT" 0 "full refresh resets partial count"
 
+# Recipe scaling: badge tap dispatch, amount scaling, classification markers,
+# check/scroll preservation across a rescale, and the instruction pane never
+# moving (FR-005/006/026/027/030, SC-009/010).
+rv_load_recipe 2
+assert_eq "$RV_SCALE_INDEX" 0 "fresh load starts at the original amounts"
+rv_toggle_check 2
+rv_toggle_check 3
+RV_INSTRUCTION_SCROLL=0
+RV_REDRAW=none; RV_GESTURE=tap; RV_X1=700; RV_X2=700; RV_Y2=20
+rv_handle_cook_gesture
+assert_eq "$RV_SCALE_INDEX" 1 "badge tap advances the ladder"
+assert_eq "$RV_SCALE_LABEL" "1 1/2x" "ladder ascends first, landing on 1 1/2x"
+assert_eq "$RV_REDRAW" scale "badge tap requests the scale redraw path"
+assert_eq "$RV_INGREDIENT_CHECKS" ',2,3,' "FR-026: checks survive a scale change"
+assert_eq "$RV_INSTRUCTION_SCROLL" 0 "FR-027: instruction scroll is untouched by an ingredient-only rescale"
+assert_eq "$(awk -F '\t' '$1==6{print $3}' "$RV_TMP/ingredients.layout")" "3 cups broth" "plain amount scaled by the active factor"
+assert_eq "$(awk -F '\t' '$1==7{print $3}' "$RV_TMP/ingredients.layout")" "1 1/2-3 cloves garlic" "range amount scaled at both endpoints"
+assert_eq "$(awk -F '\t' '$1==8{print $3; exit}' "$RV_TMP/ingredients.layout")" "1 1/2 (14-oz) cans" "a fractional container count scales while its package size stays fixed"
+assert_eq "$(awk -F '\t' '$1==8 && $9!=""{print $9}' "$RV_TMP/ingredients.layout")" "" "a scalable fractional container has no review marker"
+assert_eq "$(awk -F '\t' '$1==9{printf "%s|%s", $3, $9}' "$RV_TMP/ingredients.layout")" "Salt to taste|" "a line with no amount is unchanged and unflagged, never marked"
+assert_eq "$(awk -F '\t' '$1==11{printf "%s|%s", $3, $9}' "$RV_TMP/ingredients.layout")" "1 large pot|" "cookware under Equipment is never scaled or flagged"
+
+: > "$RV_DISPLAY_LOG"
+rv_draw_cook_scale_partial
+assert_contains "$RV_DISPLAY_LOG" $'clear-region\t590\t4\t162\t58' "scale partial clears the badge region"
+assert_contains "$RV_DISPLAY_LOG" $'text\t600\t5\t19\tbold\t1 1/2x' "scale partial redraws the updated label"
+assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t590\t4\t162\t58\tGC16' "scale partial refreshes the badge with GC16"
+assert_contains "$RV_DISPLAY_LOG" $'clear-region\t0\t110\t300\t904' "scale partial clears the ingredient pane"
+assert_contains "$RV_DISPLAY_LOG" $'refresh-region\t0\t110\t300\t904\tGC16' "scale partial refreshes the ingredient pane with GC16"
+assert_contains "$RV_DISPLAY_LOG" $'regular\t1 1/2 (14-oz) cans' "fractional container count renders without a review marker"
+assert_not_contains "$RV_DISPLAY_LOG" $'! 1 1/2 (14-oz) cans' "fractional container count does not render a review marker"
+assert_not_contains "$RV_DISPLAY_LOG" $'refresh-region\t302\t110\t456\t904' "a scale change never redraws the instruction pane"
+
+# FR-027: the ingredient scroll re-anchors to the same record across a
+# rescale, since rewrapping/flagging moves row indices but not record indices.
+# This fixture is short enough to fit on one screen (real max scroll is 0),
+# so RV_INGREDIENT_VISIBLE is temporarily narrowed to force a real scroll
+# range -- rv_apply_scale recomputes it from the actual row count either way.
+RV_INGREDIENT_VISIBLE=3
+RV_INGREDIENT_SCROLL=7
+RV_ANCHOR_BEFORE=$(awk -F "$RV_TAB" -v scroll="$RV_INGREDIENT_SCROLL" 'NR > scroll { print $1; exit }' "$RV_TMP/ingredients.layout")
+RV_REDRAW=none; RV_GESTURE=tap; RV_X1=700; RV_X2=700; RV_Y2=20
+rv_handle_cook_gesture
+assert_eq "$RV_SCALE_INDEX" 2 "second badge tap advances again"
+assert_eq "$RV_ANCHOR_BEFORE" 8 "scroll of 7 sits on record 8 before the rescale"
+RV_ANCHOR_AFTER=$(awk -F "$RV_TAB" -v scroll="$RV_INGREDIENT_SCROLL" 'NR > scroll { print $1; exit }' "$RV_TMP/ingredients.layout")
+assert_eq "$RV_ANCHOR_AFTER" "$RV_ANCHOR_BEFORE" "scroll lands on the same record after a rescale"
+
+# SC-010/FR-030: the instruction layout is never rebuilt by a scale change.
+cp "$RV_TMP/instructions.layout" "$TMP_ROOT/instructions.before"
+RV_REDRAW=none; RV_GESTURE=tap; RV_X1=700; RV_X2=700; RV_Y2=20
+rv_handle_cook_gesture
+rv_handle_cook_gesture
+rv_handle_cook_gesture
+diff -q "$TMP_ROOT/instructions.before" "$RV_TMP/instructions.layout" >/dev/null \
+    || { echo "FAIL: instructions.layout changed across a full ladder cycle" >&2; failures=$((failures + 1)); }
+
+# The badge tests touch-end x, the back button touch-start x, so a gesture
+# that starts on the back button and ends past the badge still opens the
+# back/confirm path -- the two title-bar targets cannot both fire.
+RV_REDRAW=none; RV_GESTURE=tap; RV_X1=10; RV_X2=700; RV_Y2=20
+rv_handle_cook_gesture
+assert_eq "$RV_SCREEN" confirm "a touch starting on the back button wins over badge overlap"
+RV_SCREEN=cook
+
+# FR-006: opening a different recipe from the list resets the scale ladder.
+rv_load_recipe 1
+assert_eq "$RV_SCALE_INDEX" 0 "opening a different recipe resets the scale to 1x"
+rv_load_recipe 2
+
 # Dependency failures are actionable.
 saved_regular=$RV_FONT_REGULAR
 RV_FONT_REGULAR="$TMP_ROOT/missing.ttf"
@@ -389,6 +473,22 @@ assert_contains "$RV_LOG" "gesture kind=tap" "integration gesture log"
 assert_contains "$RV_LOG" "exit requested from recipe list" "integration back-button exit"
 assert_contains "$RV_LOG" "returning to the Kindle Home screen" "integration exit log"
 assert_contains "$RV_LOG" "mock display diagnostic" "display diagnostics redirected"
+
+# Device-shell compatibility gate: the Kindle's /bin/sh behaves like dash,
+# and this codebase has already shipped one fatal crash (a `$((16#ff))`
+# base-literal that bash accepts but dash treats as a parse error killing
+# the whole script) from skipping this check before deploying.
+if command -v dash >/dev/null 2>&1; then
+    for rv_script in lib/scale.sh lib/ui.sh lib/core.sh bin/recipe_viewer.sh; do
+        if ! dash -n "$RV_APP_ROOT/$rv_script" 2>"$TMP_ROOT/dash-error.log"; then
+            echo "FAIL: dash -n rejected $rv_script:" >&2
+            cat "$TMP_ROOT/dash-error.log" >&2
+            failures=$((failures + 1))
+        fi
+    done
+else
+    echo "SKIP: dash not found on this host; device-shell syntax gate not run" >&2
+fi
 
 if (( failures > 0 )); then
     echo "$failures runtime test(s) failed" >&2
