@@ -68,6 +68,19 @@ RV_PARTIAL_FULL_EVERY=${RV_PARTIAL_FULL_EVERY:-12}
 RV_TOUCH_POLL_SECONDS=${RV_TOUCH_POLL_SECONDS:-0.5}
 RV_TOUCH_CAPTURE_RECORDS=${RV_TOUCH_CAPTURE_RECORDS:-96}
 
+# Recipe scaling ladder (space-separated parallel arrays; index by
+# RV_SCALE_INDEX). Ascends first because scaling up is the more common
+# intent, so 1 1/2x sits one tap from the default; 1x is always reachable
+# within four taps. See contracts/scale-ladder.md.
+RV_SCALE_NUMS="1 3 2 3 1"
+RV_SCALE_DENS="1 2 1 1 2"
+RV_SCALE_LABELS="1x|1 1/2x|2x|3x|1/2x"
+RV_SCALE_COUNT=5
+RV_SCALE_BADGE_X=590
+RV_SCALE_BADGE_Y=4
+RV_SCALE_BADGE_W=162
+RV_SCALE_BADGE_H=58
+
 rv_log()
 {
     printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null)" "$*" >> "$RV_LOG"
@@ -186,6 +199,21 @@ rv_reset_session()
     RV_INSTRUCTION_SCROLL=0
     RV_SELECTED_ORDINAL=0
     RV_NAV_STACK=
+    RV_SCALE_INDEX=0
+}
+
+rv_scale_select()
+{
+    # $1=ladder index; sets RV_SCALE_NUM/RV_SCALE_DEN/RV_SCALE_LABEL.
+    RV_SCALE_NUM=$(printf '%s\n' "$RV_SCALE_NUMS" | cut -d ' ' -f "$(($1 + 1))")
+    RV_SCALE_DEN=$(printf '%s\n' "$RV_SCALE_DENS" | cut -d ' ' -f "$(($1 + 1))")
+    RV_SCALE_LABEL=$(printf '%s\n' "$RV_SCALE_LABELS" | cut -d '|' -f "$(($1 + 1))")
+}
+
+rv_scale_cycle()
+{
+    RV_SCALE_INDEX=$(((RV_SCALE_INDEX + 1) % RV_SCALE_COUNT))
+    rv_scale_select "$RV_SCALE_INDEX"
 }
 
 rv_nav_push()

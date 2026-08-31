@@ -15,6 +15,7 @@ RV_TMP=${RV_TMP:-/tmp/recipe-viewer.$$}
 
 . "$RV_APP_ROOT/lib/core.sh" || exit 1
 . "$RV_APP_ROOT/lib/touch.sh" || exit 1
+. "$RV_APP_ROOT/lib/scale.sh" || exit 1
 . "$RV_APP_ROOT/lib/ui.sh" || exit 1
 
 mkdir -p "$RV_TMP" || exit 1
@@ -24,7 +25,8 @@ rv_cleanup()
         */recipe-viewer.*)
             rm -f "$RV_TMP/recipes.tsv" "$RV_TMP/touch-events.bin" \
                 "$RV_TMP/recipes.filtered.tsv" "$RV_TMP/ingredients.layout" \
-                "$RV_TMP/instructions.layout"
+                "$RV_TMP/instructions.layout" "$RV_TMP/ingredients.scaled" \
+                "$RV_TMP"/.pane-read.*
             rmdir "$RV_TMP" 2>/dev/null
             ;;
     esac
@@ -102,6 +104,7 @@ while :; do
                 list) rv_draw_list_partial ;;
                 search) rv_draw_search_partial ;;
                 ingredients|instructions) rv_draw_cook_pane_partial "$RV_REDRAW" "$RV_REDRAW_WAVEFORM" ;;
+                scale) rv_draw_cook_scale_partial ;;
             esac
         fi
     fi

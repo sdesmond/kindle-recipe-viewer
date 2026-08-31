@@ -54,14 +54,14 @@ scaling pass; never crosses a process boundary as a decimal.
 - `multiply(a, b)` — `num = a.num * b.num`, `den = a.den * b.den`, then reduce.
 - `reduce(v)` — divide both by `gcd`.
 - `compare(a, b)` — cross-multiply; never subtract-and-test-a-float.
-- `is_expressible(v)` — true when the reduced `den` is in **{1, 2, 3, 4, 8}**
-  (FR-016: halves, thirds, quarters, eighths, and whole numbers).
+- `is_expressible(v)` — true when the reduced `den` is in **{1, 2, 3, 4, 8}**.
+  It guides cookbook-natural unit selection; it does not authorize rounding.
 - `is_promotable(v)` — true when the reduced `den` is in **{1, 2, 4}**.
   This narrower set is the promotion gate (D4) and is the design's single
   tunable knob.
-- `nearest_expressible(v)` — the member of `{n/d : d in {1,2,3,4,8}}` closest
-  to `v`, chosen by exact cross-multiplied comparison; ties resolve to the
-  smaller denominator. Used only on the FR-020 path.
+- When no common-fraction unit form exists, the renderer preserves the exact
+  reduced rational (for example, `1 1/6 ounces`) rather than choosing a
+  nearby amount.
 
 **Validation**
 - `den == 0` is a parse failure, not a value: the line is flagged.
@@ -148,6 +148,9 @@ One quantity located within an ingredient line.
 | common fraction | `1/2 teaspoon salt` |
 | mixed number | `1 1/2 cups whole milk` |
 | bare count, no unit | `3 green onions, chopped` |
+| parenthetical bare-count equivalent | `1/2 c. celery (about 2 stalks)`, `1/2 c. pepper (about 1/2 of a large pepper)`, `1/2 cup (1 stick) butter` |
+| alternative expression | `1/4 tsp garlic powder or 2 cloves`; every concrete quantity in every choice scales independently. Relative ratios such as `1 part + 1 part` stay unchanged. |
+| compound amount | `1/2 cup plus 2 tablespoons`; every concrete ingredient amount scales, while temperatures, dimensions, percentages, and per-item labels remain unchanged. |
 | hyphen range | `1-2 cups quality chicken stock` |
 | word range | `10 to 12 lasagna noodles` |
 | metric, unit joined to digits | `400g '00' flour`, `400ml warm water` |
@@ -173,8 +176,9 @@ The outcome of interpreting one `INGREDIENT` record. Exactly one of:
 **Flag triggers** (D6) — a line with a scalable leading amount that also has
 any of:
 - a parenthesized group containing a digit that does not parse as a clean
-  amount + known unit (`(1 large)`, `(or 8 cups chopped spinach)`);
-- ` or ` followed by an amount (`1 dried bay leaf or 2 fresh`);
+  amount + known unit, supported `about` bare-count equivalent, or defined
+  stick count (`(1 large)`, `(or 8 cups chopped spinach)`);
+- an `or` expression that contains an amount the parser cannot interpret;
 - `plus` followed by an amount (`... olive oil , plus 1 tablespoon`);
 - an unparenthesized trailing restatement (`..., enough for 6 cups florets`).
 
@@ -185,8 +189,9 @@ amount at all (`Salt and pepper`, `Pinch of salt`, `salt, to taste`).
 **Package rule** (FR-010): when the line contains a container noun — `can`,
 `cans`, `package`, `packages`, `container`, `containers`, `jar`, `box`, `bag`,
 `bottle`, `tub` (and plurals) — only the leading count scales; every other
-number in the line keeps its written value. `1 (28-oz) Can Diced Tomatoes` at
-2x becomes `2 (28-oz) Cans Diced Tomatoes`.
+number in the line keeps its written value. The count can be fractional:
+`1 (28-oz) Can Diced Tomatoes` at 1.5x becomes `1 1/2 (28-oz) Cans Diced
+Tomatoes`.
 
 ---
 

@@ -30,9 +30,9 @@ Drawn in the cook screen's title bar, right-aligned, on every `rv_draw_cook`.
 
 | Property | Value | Constraint |
 |---|---|---|
-| x | `RV_SCALE_BADGE_X` = 632 | |
+| x | `RV_SCALE_BADGE_X` = 590 | |
 | y | `RV_SCALE_BADGE_Y` = 4 | matches the back button's y |
-| width | `RV_SCALE_BADGE_W` = 120 | must fit `1 1/2x` at 19 pt |
+| width | `RV_SCALE_BADGE_W` = 162 | gives `1 1/2x` 152 px after left padding at 19 pt |
 | height | `RV_SCALE_BADGE_H` = 58 | matches the back button; sits inside `RV_TITLE_H` = 66 |
 | stroke | 2 | same as the back button outline |
 | label point size | `RV_TITLE_PT` = 19 | vertically centred with `rv_pxh "$RV_TITLE_PT" 0` |
@@ -42,7 +42,7 @@ control for changing scale. FR-005 requires the *factor* be visible when it is
 not `1x`; the *control* must be reachable always.
 
 **Knock-on**: the cook screen title truncation shrinks from 28 characters to
-**22**, since the title's available width drops from 688 px to 554 px. The
+**22**, since the title's available width drops from 688 px to 520 px. The
 golden geometry assertions in `tests/test_runtime.sh` cover this.
 
 **Visible from both panes**: the badge is in the title bar, above the pane
@@ -57,12 +57,12 @@ check so the two title-bar targets cannot overlap.
 ```
 gesture == tap
   AND RV_Y2 <  RV_TITLE_H            (66)
-  AND RV_X2 >= RV_SCALE_BADGE_X      (632)
+  AND RV_X2 >= RV_SCALE_BADGE_X      (590)
   → advance the ladder, rescale, request RV_REDRAW=scale
 ```
 
 The back button tests `RV_X1 < 64` (touch **start**); the badge tests
-`RV_X2 >= 632` (touch **end**), consistent with how the existing handlers
+`RV_X2 >= 590` (touch **end**), consistent with how the existing handlers
 already split start-x for pane selection and end-x for in-pane targets.
 
 The badge is a cook-screen control only. The recipe list, search, and
@@ -76,7 +76,7 @@ A scale change sets `RV_REDRAW=scale`, dispatched by
 
 | Region | x, y, w, h |
 |---|---|
-| badge | 632, 4, 120, 58 |
+| badge | 590, 4, 162, 58 |
 | ingredient pane | 0, `RV_CONTENT_TOP` (110), `RV_INGREDIENT_W` (300), 904 |
 
 The instruction pane is **not** redrawn and its layout file is **not** rebuilt

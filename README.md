@@ -20,6 +20,19 @@ experience with no network dependency once it's on the device.
   and 456 px Instructions pane.
 - Flush-left ingredients with text strikethrough checks and independent pane
   scrolling.
+- Recipe scaling: a badge in the cook screen's title bar shows the active
+  factor and doubles as the control — tap it to cycle
+  `1x -> 1 1/2x -> 2x -> 3x -> 1/2x -> 1x`. Every ingredient amount the
+  parser recognizes is rescaled and rendered as a whole number or a common
+  cooking fraction (never a decimal), moved to the unit a cook would
+  actually reach for (`3 teaspoons` becomes `1 tablespoon`, never
+  `1/8 cup`), with metric amounts never converting to US customary or back.
+  A line the parser cannot fully interpret is left in its exact original
+  wording and marked `!`; an amount too small to express exactly is rounded
+  to the nearest common fraction and marked `~`. Instruction text
+  deliberately never scales — the badge stays visible from the instruction
+  pane as a reminder that its amounts are still as written. Checked
+  ingredients and both panes' reading position survive a scale change.
 - Non-flashing rectangular refreshes for checks/cursors (`DU`) and pane/list
   scrolling (`GC16`), with full flashing refreshes on screen transitions and
   after every 12 partial updates to clean the panel.

@@ -114,7 +114,7 @@ rv_build_layout()
         for (i = 1; i <= length(text); i++) total += glyph(substr(text, i, 1))
         return total
     }
-    function emit_row(idx, kind, rowtext, first, link, phrase,    p, row_link, row_prefix, row_phrase_w) {
+    function emit_row(idx, kind, rowtext, first, link, phrase, marker,    p, row_link, row_prefix, row_phrase_w, row_marker, row_marker_units) {
         # With a phrase given (instruction steps), only that located phrase
         # becomes a tap/underline target, so the rest of the step still reads
         # as plain text. With no phrase (ingredient links, which have no
@@ -135,16 +135,26 @@ rv_build_layout()
             row_prefix = 0
             row_phrase_w = measured(rowtext)
         }
-        print idx "\t" kind "\t" rowtext "\t" first "\t" measured(rowtext) "\t" row_link "\t" row_prefix "\t" row_phrase_w
+        # The classification marker rides only on an items first wrapped row,
+        # so a wrapped flagged/approximated ingredient is marked once, not
+        # once per row (contracts/layout-row.md).
+        row_marker = (first == 1) ? marker : ""
+        # The marker is drawn as a "MARKER TEXT" prefix inside this rows own
+        # rv_text call (see rv_draw_pane in ui.sh), which shifts where the
+        # row text glyphs actually start on screen. Emit the marker+space
+        # width so the renderer can offset strikethrough/underline geometry
+        # to match.
+        row_marker_units = (row_marker != "") ? measured(row_marker " ") : 0
+        print idx "\t" kind "\t" rowtext "\t" first "\t" measured(rowtext) "\t" row_link "\t" row_prefix "\t" row_phrase_w "\t" row_marker "\t" row_marker_units
     }
-    function emit(idx, kind, text, link, phrase,    rest, pos, last_space, line, first, i, used, c) {
+    function emit(idx, kind, text, link, phrase, marker,    rest, pos, last_space, line, first, i, used, c) {
         rest = text
         line = ""
         first = 1
         while (length(rest) > 0) {
             sub(/^[ ]+/, "", rest)
             if (measured(rest) <= width) {
-                emit_row(idx, kind, rest, first, link, phrase)
+                emit_row(idx, kind, rest, first, link, phrase, marker)
                 return
             }
             used = 0
@@ -161,12 +171,17 @@ rv_build_layout()
             if (pos < 1) pos = 1
             line = substr(rest, 1, pos)
             sub(/[ ]+$/, "", line)
-            emit_row(idx, kind, line, first, link, phrase)
+            emit_row(idx, kind, line, first, link, phrase, marker)
             first = 0
             rest = substr(rest, pos + 1)
         }
     }
-    $1 == wanted { record_index++; emit(record_index, $2, $3, $4, $5) }
+    function marker_for(flag) {
+        if (flag == "approx") return "~"
+        if (flag == "flag") return "!"
+        return ""
+    }
+    $1 == wanted { record_index++; emit(record_index, $2, $3, $4, $5, marker_for($6)) }
     ' "$1" > "$4"
 }
 
@@ -184,7 +199,22 @@ rv_load_recipe()
     # right margin while retaining a small safety inset.
     RV_INGREDIENT_WRAP=$(((RV_INGREDIENT_W - 20) * 35 * RV_FONT_WIDTH_PERCENT / (RV_INGREDIENT_FONT_PX * 100)))
     RV_INSTRUCTION_WRAP=$(((RV_SCREEN_W - RV_INSTRUCTION_X - 26) * 35 * RV_FONT_WIDTH_PERCENT / (RV_INSTRUCTION_FONT_PX * 100)))
-    rv_build_layout "$RV_ACTIVE_RECIPE" INGREDIENT "$RV_INGREDIENT_WRAP" "$RV_TMP/ingredients.layout"
+    # Opening, linking to, or unwinding to any recipe starts at its original
+    # amounts (FR-006), so the scale ladder resets before the ingredient
+    # layout below is built from it.
+    RV_SCALE_INDEX=0
+    rv_scale_select 0
+    if [ "$RV_SCALE_INDEX" -eq 0 ]; then
+        rv_build_layout "$RV_ACTIVE_RECIPE" INGREDIENT "$RV_INGREDIENT_WRAP" "$RV_TMP/ingredients.layout"
+    elif rv_scale_ingredients "$RV_ACTIVE_RECIPE" "$RV_SCALE_NUM" "$RV_SCALE_DEN" "$RV_TMP/ingredients.scaled"; then
+        rv_build_layout "$RV_TMP/ingredients.scaled" INGREDIENT "$RV_INGREDIENT_WRAP" "$RV_TMP/ingredients.layout"
+    else
+        rv_log "failure scale factor=$RV_SCALE_NUM/$RV_SCALE_DEN on load; falling back to unscaled recipe"
+        rv_build_layout "$RV_ACTIVE_RECIPE" INGREDIENT "$RV_INGREDIENT_WRAP" "$RV_TMP/ingredients.layout"
+    fi
+    # The instruction layout always reads the recipe file directly: instruction
+    # amounts never scale (FR-030) and are built once per load, never rebuilt
+    # on a scale change (SC-010).
     rv_build_layout "$RV_ACTIVE_RECIPE" INSTRUCTION "$RV_INSTRUCTION_WRAP" "$RV_TMP/instructions.layout"
     RV_INGREDIENT_ROWS=$(wc -l < "$RV_TMP/ingredients.layout" | tr -d ' ')
     RV_INSTRUCTION_ROWS=$(wc -l < "$RV_TMP/instructions.layout" | tr -d ' ')
@@ -294,7 +324,16 @@ rv_draw_pane()
     RV_Y=$RV_CONTENT_TOP
     RV_RENDERED=0
     RV_PREVIOUS_KIND=
-    while IFS="$RV_TAB" read -r RV_RECORD_INDEX RV_KIND RV_LINE_TEXT RV_FIRST RV_LINE_UNITS RV_LINK_UID RV_LINK_PREFIX_UNITS RV_LINK_PHRASE_UNITS; do
+    # POSIX `read` treats tab as IFS whitespace, so runs of it (three
+    # consecutive empty link/marker columns before a non-empty one) collapse
+    # and misalign every field after them -- confirmed under both bash and
+    # the Kindle's dash. Re-delimiting on a unit separator (never IFS
+    # whitespace) first, once per draw rather than per row, keeps every
+    # empty column intact without adding a fork to the per-row hot path.
+    RV_US=$(printf '\037')
+    RV_LAYOUT_US="$RV_TMP/.pane-read.$$"
+    tr '\t' "$RV_US" < "$RV_LAYOUT" > "$RV_LAYOUT_US"
+    while IFS="$RV_US" read -r RV_RECORD_INDEX RV_KIND RV_LINE_TEXT RV_FIRST RV_LINE_UNITS RV_LINK_UID RV_LINK_PREFIX_UNITS RV_LINK_PHRASE_UNITS RV_MARKER RV_MARKER_UNITS; do
         RV_VISUAL=$((RV_VISUAL + 1))
         [ "$RV_VISUAL" -gt "$RV_SCROLL" ] || continue
         if [ "$RV_FIRST" = 1 ] && [ "$RV_KIND" = item ] && \
@@ -311,17 +350,32 @@ rv_draw_pane()
         fi
         RV_PT=$RV_INSTRUCTION_PT
         [ "$RV_PANE" = ingredients ] && RV_PT=$RV_INGREDIENT_PT
-        rv_text "$RV_TEXT_X" "$RV_Y" "$RV_PT" "$RV_STYLE" "$RV_LINE_TEXT"
+        RV_ROW_TEXT=$RV_LINE_TEXT
+        # The marker rides inside this row's existing rv_text call rather
+        # than an extra draw (each FBInk invocation costs ~100-200 ms).
+        # RV_LINE_UNITS/RV_LINK_PREFIX_UNITS are measured from the unmarked
+        # text, so RV_TEXT_START below shifts the strikethrough/link-underline
+        # geometry right by the marker+space width to keep it aligned to
+        # where the ingredient text itself actually starts on screen.
+        RV_TEXT_START=$RV_TEXT_X
+        if [ -n "$RV_MARKER" ]; then
+            RV_ROW_TEXT="$RV_MARKER $RV_LINE_TEXT"
+            RV_MARKER_FONT_PX=$RV_INSTRUCTION_FONT_PX
+            [ "$RV_PANE" = ingredients ] && RV_MARKER_FONT_PX=$RV_INGREDIENT_FONT_PX
+            RV_MARKER_PX=$(((RV_MARKER_UNITS * RV_MARKER_FONT_PX * 100 + (35 * RV_FONT_WIDTH_PERCENT) - 1) / (35 * RV_FONT_WIDTH_PERCENT)))
+            RV_TEXT_START=$((RV_TEXT_X + RV_MARKER_PX))
+        fi
+        rv_text "$RV_TEXT_X" "$RV_Y" "$RV_PT" "$RV_STYLE" "$RV_ROW_TEXT"
         if [ "$RV_PANE" = ingredients ] && [ "$RV_KIND" = item ] && rv_checked_has "$RV_RECORD_INDEX"; then
             # Draw after the glyphs so the line remains crisp. RV_LINE_UNITS is
             # measured in the same 35px Atkinson units used by the wrapper;
             # compensate for FBInk's calibrated horizontal rasterization.
             RV_STRIKE_W=$(((RV_LINE_UNITS * RV_INGREDIENT_FONT_PX * 100 + (35 * RV_FONT_WIDTH_PERCENT) - 1) / (35 * RV_FONT_WIDTH_PERCENT)))
-            RV_STRIKE_MAX=$((RV_INGREDIENT_W - RV_TEXT_X - 8))
+            RV_STRIKE_MAX=$((RV_INGREDIENT_W - RV_TEXT_START - 8))
             [ "$RV_STRIKE_W" -gt "$RV_STRIKE_MAX" ] && RV_STRIKE_W=$RV_STRIKE_MAX
             [ "$RV_STRIKE_W" -lt 4 ] && RV_STRIKE_W=4
             RV_STRIKE_Y=$((RV_Y + RV_INGREDIENT_FONT_PX * 11 / 20))
-            rv_rect "$RV_TEXT_X" "$RV_STRIKE_Y" "$RV_STRIKE_W" 2
+            rv_rect "$RV_TEXT_START" "$RV_STRIKE_Y" "$RV_STRIKE_W" 2
         fi
         if [ "$RV_KIND" = item ] && [ -n "$RV_LINK_UID" ]; then
             # In instructions, only the resolved recipe-link phrase is
@@ -337,7 +391,7 @@ rv_draw_pane()
             fi
             RV_LINK_PREFIX_PX=$(((RV_LINK_PREFIX_UNITS * RV_LINK_FONT_PX * 100 + (35 * RV_FONT_WIDTH_PERCENT) - 1) / (35 * RV_FONT_WIDTH_PERCENT)))
             RV_LINK_W=$(((RV_LINK_PHRASE_UNITS * RV_LINK_FONT_PX * 100 + (35 * RV_FONT_WIDTH_PERCENT) - 1) / (35 * RV_FONT_WIDTH_PERCENT)))
-            RV_LINK_X=$((RV_TEXT_X + RV_LINK_PREFIX_PX))
+            RV_LINK_X=$((RV_TEXT_START + RV_LINK_PREFIX_PX))
             RV_LINK_MAX=$((RV_PANE_X + RV_LINK_PANE_W - RV_LINK_X - 8))
             [ "$RV_LINK_W" -gt "$RV_LINK_MAX" ] && RV_LINK_W=$RV_LINK_MAX
             [ "$RV_LINK_W" -lt 4 ] && RV_LINK_W=4
@@ -347,7 +401,8 @@ rv_draw_pane()
         RV_Y=$((RV_Y + RV_LINE_H))
         RV_PREVIOUS_KIND=$RV_KIND
         RV_RENDERED=$((RV_RENDERED + 1))
-    done < "$RV_LAYOUT"
+    done < "$RV_LAYOUT_US"
+    rm -f "$RV_LAYOUT_US"
     # RV_RENDERED is the exact, gap-aware count of rows this call actually
     # fit on screen -- unlike RV_INGREDIENT_VISIBLE/RV_INSTRUCTION_VISIBLE
     # (RV_VISIBLE above), which assumes zero inter-item gap and so over- or
@@ -374,8 +429,9 @@ rv_draw_cook()
     RV_BACK_TEXT_Y=$((RV_BACK_Y + (RV_BACK_H - RV_BACK_CELL_H) / 2))
     rv_text "$((RV_BACK_X + 18))" "$RV_BACK_TEXT_Y" "$RV_TITLE_PT" bold "<"
     RV_TITLE_X=$((RV_BACK_X + RV_BACK_W + 8))
-    rv_truncate "$RV_RECORD_TITLE" 28
+    rv_truncate "$RV_RECORD_TITLE" 22
     rv_text "$RV_TITLE_X" 4 "$RV_TITLE_PT" bold "$RV_TRUNCATED"
+    rv_draw_scale_badge
     rv_rect "$RV_INGREDIENT_W" "$RV_TITLE_H" "$RV_DIVIDER_W" "$((RV_CONTENT_BOTTOM - RV_TITLE_H))"
     rv_text 10 69 "$RV_PANE_HEADER_PT" bold Ingredients
     rv_text "$((RV_INSTRUCTION_X + 10))" 69 "$RV_PANE_HEADER_PT" bold Instructions
@@ -385,6 +441,14 @@ rv_draw_cook()
     rv_log "render screen=cook title=$RV_RECORD_TITLE geometry=${RV_INGREDIENT_W}+${RV_DIVIDER_W}+${RV_INSTRUCTION_W} ingredient_scroll=$RV_INGREDIENT_SCROLL instruction_scroll=$RV_INSTRUCTION_SCROLL line_heights=$RV_INGREDIENT_LINE_H,$RV_INSTRUCTION_LINE_H"
     rv_refresh
     RV_PARTIAL_COUNT=0
+}
+
+rv_draw_scale_badge()
+{
+    rv_draw_outline "$RV_SCALE_BADGE_X" "$RV_SCALE_BADGE_Y" "$RV_SCALE_BADGE_W" "$RV_SCALE_BADGE_H" 2
+    RV_SCALE_CELL_H=$(rv_pxh "$RV_TITLE_PT" 0)
+    RV_SCALE_TEXT_Y=$((RV_SCALE_BADGE_Y + (RV_SCALE_BADGE_H - RV_SCALE_CELL_H) / 2))
+    rv_text "$((RV_SCALE_BADGE_X + 10))" "$RV_SCALE_TEXT_Y" "$RV_TITLE_PT" bold "$RV_SCALE_LABEL"
 }
 
 rv_draw_outline()
@@ -609,6 +673,42 @@ rv_draw_cook_pane_partial()
     rv_log "partial screen=cook pane=$RV_PARTIAL_PANE region=$RV_PARTIAL_X,$RV_CONTENT_TOP,${RV_PARTIAL_W}x$RV_PARTIAL_H waveform=$RV_PARTIAL_WAVEFORM count=$RV_PARTIAL_COUNT"
 }
 
+rv_draw_cook_scale_partial()
+{
+    # Refreshes the two regions a scale change can affect: the badge label
+    # and the ingredient pane. The instruction pane is never touched here --
+    # its layout is not rebuilt on a scale change (FR-030, SC-010).
+    if ! rv_partial_allowed; then
+        rv_draw_cook
+        return
+    fi
+    if ! rv_clear_region "$RV_SCALE_BADGE_X" "$RV_SCALE_BADGE_Y" "$RV_SCALE_BADGE_W" "$RV_SCALE_BADGE_H"; then
+        rv_log "partial clear failed region=badge; falling back to full"
+        rv_draw_cook
+        return
+    fi
+    rv_draw_scale_badge
+    if ! rv_refresh_region "$RV_SCALE_BADGE_X" "$RV_SCALE_BADGE_Y" "$RV_SCALE_BADGE_W" "$RV_SCALE_BADGE_H" GC16; then
+        rv_log "partial refresh failed region=badge; falling back to full"
+        rv_draw_cook
+        return
+    fi
+    RV_INGREDIENT_PANE_H=$((RV_CONTENT_BOTTOM - RV_CONTENT_TOP))
+    if ! rv_clear_region 0 "$RV_CONTENT_TOP" "$RV_INGREDIENT_W" "$RV_INGREDIENT_PANE_H"; then
+        rv_log "partial clear failed region=ingredients; falling back to full"
+        rv_draw_cook
+        return
+    fi
+    rv_draw_pane "$RV_TMP/ingredients.layout" 0 10 "$RV_INGREDIENT_SCROLL" "$RV_INGREDIENT_VISIBLE" "$RV_INGREDIENT_LINE_H" "$RV_INGREDIENT_CURSOR" ingredients
+    if ! rv_refresh_region 0 "$RV_CONTENT_TOP" "$RV_INGREDIENT_W" "$RV_INGREDIENT_PANE_H" GC16; then
+        rv_log "partial refresh failed region=ingredients; falling back to full"
+        rv_draw_cook
+        return
+    fi
+    RV_PARTIAL_COUNT=$((RV_PARTIAL_COUNT + 1))
+    rv_log "partial screen=cook scale=$RV_SCALE_LABEL waveform=GC16 count=$RV_PARTIAL_COUNT"
+}
+
 rv_handle_list_gesture()
 {
     RV_LIST_MAX=$((RV_FILTERED_COUNT - RV_LIST_VISIBLE)); [ "$RV_LIST_MAX" -lt 0 ] && RV_LIST_MAX=0
@@ -758,6 +858,17 @@ rv_handle_cook_gesture()
             RV_REDRAW=full
             rv_log "end requested uid=$RV_RECIPE_UID"
         fi
+        return
+    fi
+    # The badge tests touch-end x (RV_X2), the back button touch-start x
+    # (RV_X1) -- consistent with how pane selection already uses start-x
+    # while in-pane targets use end-x -- so the two title-bar targets can
+    # never both fire for the same gesture.
+    if [ "$RV_GESTURE" = tap ] && [ "$RV_Y2" -lt "$RV_TITLE_H" ] && [ "$RV_X2" -ge "$RV_SCALE_BADGE_X" ]; then
+        rv_scale_cycle
+        rv_apply_scale
+        RV_REDRAW=scale
+        rv_log "scale badge tapped index=$RV_SCALE_INDEX label=$RV_SCALE_LABEL"
         return
     fi
     [ "$RV_Y2" -ge "$RV_CONTENT_TOP" ] && [ "$RV_Y2" -lt "$RV_CONTENT_BOTTOM" ] || return

@@ -125,9 +125,9 @@ bash tests/test_runtime.sh
 ```
 
 Assertions to look for in the output:
-- the badge is drawn in the title bar at 632,4,120,58 on every `rv_draw_cook`,
+- the badge is drawn in the title bar at 590,4,162,58 on every `rv_draw_cook`,
   and its label matches the active factor;
-- a tap at `x >= 632, y < 66` advances the ladder, while a tap at `x < 64`
+- a tap at `x >= 590, y < 66` advances the ladder, while a tap at `x < 64`
   still opens the back/confirm path — the two title-bar targets must not
   overlap;
 - four checked ingredients are still checked after a scale change
